@@ -86,8 +86,20 @@ func NewApp() *App {
 		Timeout:   10 * time.Second,
 	}
 
-	homeDir, _ := os.UserHomeDir()
-	configDir := filepath.Join(homeDir, ".application-updater")
+	// 获取可执行文件所在的目录作为配置目录
+	execPath, err := os.Executable()
+	if err != nil {
+		fmt.Printf("警告: 无法获取程序可执行文件路径: %v\n", err)
+		// 如果获取失败，回退到当前工作目录
+		execPath, err = os.Getwd()
+		if err != nil {
+			fmt.Printf("警告: 无法获取工作目录: %v\n", err)
+			execPath = "."
+		}
+	}
+
+	configDir := filepath.Join(filepath.Dir(execPath), "config")
+	fmt.Printf("配置目录: %s\n", configDir)
 
 	return &App{
 		devices:     make([]Device, 0, 50),    // 预分配容量避免频繁扩容
@@ -104,10 +116,124 @@ func (a *App) startup(ctx context.Context) {
 
 	// 确保配置目录存在
 	if err := os.MkdirAll(a.configDir, 0755); err != nil {
-		fmt.Printf("Error creating config directory: %v\n", err)
+		fmt.Printf("错误: 无法创建配置目录 %s: %v\n", a.configDir, err)
+
+		// 尝试在当前目录创建一个备用配置目录
+		currentDir, err := os.Getwd()
+		if err == nil {
+			backupConfigDir := filepath.Join(currentDir, "config")
+			fmt.Printf("尝试在当前目录创建备用配置目录: %s\n", backupConfigDir)
+
+			if err := os.MkdirAll(backupConfigDir, 0755); err == nil {
+				a.configDir = backupConfigDir
+				fmt.Printf("成功创建备用配置目录: %s\n", a.configDir)
+			} else {
+				fmt.Printf("无法创建备用配置目录: %v\n", err)
+			}
+		}
+	} else {
+		fmt.Printf("配置目录已就绪: %s\n", a.configDir)
 	}
 
+	// 清空uploads临时文件夹
+	a.cleanUploadsDirectory()
+
 	a.LoadDevices() // Load devices from file on startup
+}
+
+// cleanUploadsDirectory 清空uploads临时文件夹的内容，但保留文件夹本身
+func (a *App) cleanUploadsDirectory() {
+	// 获取程序执行文件路径
+	execPath, err := os.Executable()
+	if err != nil {
+		fmt.Printf("警告: 无法获取程序可执行文件路径: %v\n", err)
+		// 如果获取失败，回退到当前工作目录
+		execPath, err = os.Getwd()
+		if err != nil {
+			fmt.Printf("警告: 无法获取工作目录: %v\n", err)
+			return
+		}
+	}
+
+	// 使用程序执行目录确定uploads目录路径
+	execDir := filepath.Dir(execPath)
+	uploadsDir := filepath.Join(execDir, "uploads")
+
+	// 检查目录是否存在，如果不存在则不需要清空
+	if _, err := os.Stat(uploadsDir); os.IsNotExist(err) {
+		return
+	}
+
+	// 打开目录
+	dir, err := os.Open(uploadsDir)
+	if err != nil {
+		fmt.Printf("警告: 无法打开uploads目录进行清理: %v\n", err)
+		return
+	}
+	defer dir.Close()
+
+	// 读取目录中的所有条目
+	entries, err := dir.Readdir(-1)
+	if err != nil {
+		fmt.Printf("警告: 无法读取uploads目录内容: %v\n", err)
+		return
+	}
+
+	// 删除每个文件/子目录
+	for _, entry := range entries {
+		entryPath := filepath.Join(uploadsDir, entry.Name())
+		err := os.RemoveAll(entryPath)
+		if err != nil {
+			fmt.Printf("警告: 无法删除uploads目录中的项目 %s: %v\n", entryPath, err)
+		} else {
+			fmt.Printf("已删除临时文件: %s\n", entryPath)
+		}
+	}
+
+	fmt.Printf("已清空uploads临时目录: %s\n", uploadsDir)
+
+	// 同样检查当前工作目录中的uploads目录
+	currentDir, err := os.Getwd()
+	if err == nil && currentDir != execDir {
+		currentUploadsDir := filepath.Join(currentDir, "uploads")
+		if _, err := os.Stat(currentUploadsDir); err == nil {
+			// 目录存在，清空它
+			if err := a.cleanDirectory(currentUploadsDir); err != nil {
+				fmt.Printf("警告: 无法清空当前目录中的uploads目录: %v\n", err)
+			} else {
+				fmt.Printf("已清空当前目录中的uploads临时目录: %s\n", currentUploadsDir)
+			}
+		}
+	}
+}
+
+// cleanDirectory 清空指定目录的内容，但保留目录本身
+func (a *App) cleanDirectory(dirPath string) error {
+	// 打开目录
+	dir, err := os.Open(dirPath)
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+
+	// 读取目录中的所有条目
+	entries, err := dir.Readdir(-1)
+	if err != nil {
+		return err
+	}
+
+	// 删除每个文件/子目录
+	for _, entry := range entries {
+		entryPath := filepath.Join(dirPath, entry.Name())
+		err := os.RemoveAll(entryPath)
+		if err != nil {
+			fmt.Printf("警告: 无法删除目录中的项目 %s: %v\n", entryPath, err)
+		} else {
+			fmt.Printf("已删除临时文件: %s\n", entryPath)
+		}
+	}
+
+	return nil
 }
 
 // GetDevices returns the list of devices
@@ -128,18 +254,43 @@ func (a *App) SaveDevices() error {
 	a.mutex.RUnlock()
 
 	if err != nil {
-		return err
+		return fmt.Errorf("序列化设备数据失败: %w", err)
 	}
 
 	devicesPath := filepath.Join(a.configDir, "devices.json")
+	fmt.Printf("保存设备列表到: %s\n", devicesPath)
+
+	// 确保配置目录存在
+	if err := os.MkdirAll(a.configDir, 0755); err != nil {
+		return fmt.Errorf("创建配置目录失败: %w", err)
+	}
 
 	// 使用临时文件并重命名的方式，确保写入操作的原子性
 	tempFile := devicesPath + ".tmp"
 	if err := os.WriteFile(tempFile, data, 0644); err != nil {
-		return err
+		return fmt.Errorf("写入临时文件失败 %s: %w", tempFile, err)
 	}
 
-	return os.Rename(tempFile, devicesPath)
+	// 在Windows上，如果目标文件已存在，重命名可能会失败
+	// 先尝试删除目标文件
+	_ = os.Remove(devicesPath)
+
+	if err := os.Rename(tempFile, devicesPath); err != nil {
+		// 如果重命名失败，直接复制文件内容
+		if tempData, readErr := os.ReadFile(tempFile); readErr == nil {
+			if writeErr := os.WriteFile(devicesPath, tempData, 0644); writeErr == nil {
+				// 写入成功，删除临时文件
+				_ = os.Remove(tempFile)
+				return nil
+			} else {
+				return fmt.Errorf("写入目标文件失败: %w", writeErr)
+			}
+		}
+		return fmt.Errorf("重命名文件失败: %w", err)
+	}
+
+	fmt.Printf("成功保存了 %d 个设备\n", len(a.devices))
+	return nil
 }
 
 // LoadDevices loads the devices from a JSON file
@@ -148,9 +299,11 @@ func (a *App) LoadDevices() error {
 	defer a.mutex.Unlock()
 
 	devicesPath := filepath.Join(a.configDir, "devices.json")
+	fmt.Printf("尝试从 %s 加载设备列表\n", devicesPath)
 
 	if _, err := os.Stat(devicesPath); os.IsNotExist(err) {
-		// File doesn't exist, initialize with empty devices
+		// 文件不存在，初始化为空设备列表
+		fmt.Printf("设备列表文件不存在，将使用空列表\n")
 		a.devices = make([]Device, 0, 50)        // 预分配容量
 		a.deviceCache = make(map[string]*Device) // 清空缓存
 		return nil
@@ -158,13 +311,29 @@ func (a *App) LoadDevices() error {
 
 	data, err := os.ReadFile(devicesPath)
 	if err != nil {
-		return err
+		fmt.Printf("读取设备列表文件失败: %v\n", err)
+		// 如果读取失败，也使用空列表
+		a.devices = make([]Device, 0, 50)
+		a.deviceCache = make(map[string]*Device)
+		return fmt.Errorf("读取设备列表文件失败: %w", err)
+	}
+
+	// 如果文件是空的，使用空列表
+	if len(data) == 0 {
+		fmt.Printf("设备列表文件为空\n")
+		a.devices = make([]Device, 0, 50)
+		a.deviceCache = make(map[string]*Device)
+		return nil
 	}
 
 	// 清空当前数据并重新加载
 	a.devices = make([]Device, 0, 50)
 	if err := json.Unmarshal(data, &a.devices); err != nil {
-		return err
+		fmt.Printf("解析设备列表JSON失败: %v\n", err)
+		// 解析失败时也使用空列表
+		a.devices = make([]Device, 0, 50)
+		a.deviceCache = make(map[string]*Device)
+		return fmt.Errorf("解析设备列表JSON失败: %w", err)
 	}
 
 	// 重建设备缓存
@@ -173,6 +342,7 @@ func (a *App) LoadDevices() error {
 		a.deviceCache[a.devices[i].IP] = &a.devices[i]
 	}
 
+	fmt.Printf("成功加载了 %d 个设备\n", len(a.devices))
 	return nil
 }
 
@@ -530,30 +700,66 @@ func (a *App) LoginToDevice(ip, username, password string) (string, error) {
 var UploadFilePath string
 
 // SetUploadFile sets the path of the file to upload
-// 只接收文件名，但会在应用目录中创建一个专用目录来存放上传文件
+// 只接收文件名，但会在程序执行目录中创建一个专用目录来存放上传文件
 func (a *App) SetUploadFile(filename string) string {
-	// 创建应用程序专用的临时目录
-	tempDir := filepath.Join(a.configDir, "uploads")
-	if err := os.MkdirAll(tempDir, 0755); err != nil {
-		fmt.Printf("无法创建上传目录: %v\n", err)
-		return ""
+	// 获取程序执行文件路径
+	execPath, err := os.Executable()
+	if err != nil {
+		fmt.Printf("警告: 无法获取程序可执行文件路径: %v\n", err)
+		// 如果获取失败，回退到当前工作目录
+		execPath, err = os.Getwd()
+		if err != nil {
+			fmt.Printf("警告: 无法获取工作目录: %v\n", err)
+			execPath = "."
+		}
+	}
+
+	// 直接使用程序执行目录创建uploads目录
+	execDir := filepath.Dir(execPath)
+	uploadsDir := filepath.Join(execDir, "uploads")
+	fmt.Printf("创建上传文件目录: %s (程序执行目录: %s)\n", uploadsDir, execDir)
+
+	if err := os.MkdirAll(uploadsDir, 0755); err != nil {
+		fmt.Printf("无法在程序目录创建上传目录: %v\n", err)
+
+		// 尝试在当前目录创建uploads目录
+		currentDir, _ := os.Getwd()
+		if currentDir != execDir {
+			uploadsDir = filepath.Join(currentDir, "uploads")
+			fmt.Printf("尝试在当前目录创建上传目录: %s\n", uploadsDir)
+
+			if err := os.MkdirAll(uploadsDir, 0755); err != nil {
+				fmt.Printf("无法在当前目录创建上传目录: %v\n", err)
+				return ""
+			}
+		} else {
+			return ""
+		}
 	}
 
 	// 预期完整路径位置
-	expectedPath := filepath.Join(tempDir, filename)
+	expectedPath := filepath.Join(uploadsDir, filename)
 	UploadFilePath = expectedPath
+	fmt.Printf("设置上传文件路径: %s\n", expectedPath)
 
 	// 检查预期路径是否已经存在有效文件
 	if _, err := os.Stat(expectedPath); err == nil {
 		// 文件已存在于预期位置
-		fmt.Printf("文件已存在: %s\n", expectedPath)
-		return expectedPath
+		fileInfo, err := os.Stat(expectedPath)
+		if err == nil && fileInfo.Size() > 0 {
+			fmt.Printf("文件已存在并有效: %s (大小: %d 字节)\n", expectedPath, fileInfo.Size())
+			return expectedPath
+		} else {
+			fmt.Printf("文件存在但可能无效: %s\n", expectedPath)
+			// 继续寻找有效文件
+		}
 	}
 
 	// 尝试在多个位置寻找文件
 	possibleLocations := []string{
-		filename,                     // 相对路径
-		filepath.Join(".", filename), // 当前目录
+		filename,                         // 相对路径
+		filepath.Join(".", filename),     // 当前目录
+		filepath.Join(execDir, filename), // 可执行文件所在目录
 	}
 
 	// 添加绝对路径（如果提供的是绝对路径）
@@ -564,25 +770,25 @@ func (a *App) SetUploadFile(filename string) string {
 	// 添加用户目录
 	if homeDir, err := os.UserHomeDir(); err == nil {
 		possibleLocations = append(possibleLocations, filepath.Join(homeDir, filename))
-	}
-
-	// 添加工作目录
-	if workDir, err := os.Getwd(); err == nil {
-		possibleLocations = append(possibleLocations, filepath.Join(workDir, filename))
-	}
-
-	// 添加常见下载目录
-	if homeDir, err := os.UserHomeDir(); err == nil {
 		possibleLocations = append(possibleLocations, filepath.Join(homeDir, "Downloads", filename))
 	}
 
-	// 尝试找到文件并复制到应用程序的uploads目录
+	// 添加工作目录
+	if workDir, err := os.Getwd(); err == nil && workDir != execDir {
+		possibleLocations = append(possibleLocations, filepath.Join(workDir, filename))
+	}
+
+	fmt.Printf("在以下位置寻找文件 '%s':\n", filename)
 	for _, loc := range possibleLocations {
-		if _, err := os.Stat(loc); err == nil {
+		fmt.Printf("- 检查: %s\n", loc)
+		if fileInfo, err := os.Stat(loc); err == nil && fileInfo.Size() > 0 {
 			// 发现文件，复制到应用目录
+			fmt.Printf("  找到文件 (大小: %d 字节)\n", fileInfo.Size())
 			if err := copyFile(loc, expectedPath); err == nil {
 				fmt.Printf("已复制文件: %s -> %s\n", loc, expectedPath)
 				return expectedPath
+			} else {
+				fmt.Printf("复制文件失败: %v\n", err)
 			}
 		}
 	}

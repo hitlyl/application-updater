@@ -16,7 +16,7 @@ jobs:
       fail-fast: false
       matrix:
         build:
-          - name: "App"
+          - name: "Updater.exe"
             platform: "windows/amd64"
             os: "windows-latest"
 
