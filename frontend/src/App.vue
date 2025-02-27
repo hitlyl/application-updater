@@ -104,14 +104,13 @@ function goToPage(page: number) {
   currentPage.value = page;
 }
 
-// 设备选择相关的优化
 // 计算属性：按首字母分组的设备
 const groupedDevices = computed(() => {
   const groups: Record<string, Device[]> = {};
 
   filteredDevices.value.forEach((device) => {
-    // 使用IP地址的第一个段作为分组键
-    const groupKey = device.ip.split(".").slice(0, 3).join(".");
+    // 使用buildTime作为分组键，而不是IP地址
+    const groupKey = device.buildTime || "未知版本";
     if (!groups[groupKey]) {
       groups[groupKey] = [];
     }
@@ -164,6 +163,22 @@ function isGroupPartiallySelected(groupKey: string): boolean {
   ).length;
   return selectedCount > 0 && selectedCount < onlineDevices.length;
 }
+
+// 更新选中的buildTime列表计算属性
+const selectedBuildTimes = computed(() => {
+  const buildTimes = new Set<string>();
+
+  Object.entries(selectedDevices.value)
+    .filter(([_, selected]) => selected)
+    .forEach(([ip]) => {
+      const device = devices.value.find((d) => d.ip === ip);
+      if (device && device.buildTime) {
+        buildTimes.add(device.buildTime);
+      }
+    });
+
+  return Array.from(buildTimes);
+});
 
 // Fetch devices on component mount
 onMounted(async () => {
@@ -229,16 +244,56 @@ async function refreshDevices() {
 
 // Add a new device
 async function addDevice() {
-  if (!App || !newDeviceIP.value) return;
+  if (!App) {
+    alert("无法连接到后端服务，请重新加载页面");
+    return;
+  }
+
+  if (!newDeviceIP.value) {
+    alert("请输入设备IP地址");
+    return;
+  }
+
+  // 简单的IP地址格式验证
+  const ipPattern = /^(\d{1,3}\.){3}\d{1,3}$/;
+  if (!ipPattern.test(newDeviceIP.value)) {
+    alert("请输入有效的IP地址格式，例如: 192.168.1.100");
+    return;
+  }
 
   isLoading.value = true;
   try {
-    await App.AddDevice(newDeviceIP.value);
+    console.log("开始添加设备:", newDeviceIP.value);
+
+    // 设置超时，防止长时间阻塞
+    const addDevicePromise = App.AddDevice(newDeviceIP.value);
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(
+        () => reject(new Error("添加设备超时，请检查设备是否在线")),
+        10000
+      )
+    );
+
+    await Promise.race([addDevicePromise, timeoutPromise]);
+    console.log("设备添加成功，正在刷新设备列表");
+
+    // 添加成功后重新加载设备列表
     await loadDevices();
     newDeviceIP.value = "";
-  } catch (error) {
+  } catch (error: unknown) {
     console.error("添加设备出错:", error);
-    alert(`添加设备失败: ${error}`);
+
+    // 提供更友好的错误信息
+    const errorMsg = String(error);
+    if (errorMsg.includes("timeout") || errorMsg.includes("超时")) {
+      alert("连接设备超时，请确保设备在线并且能够访问");
+    } else if (errorMsg.includes("设备测试失败")) {
+      alert("无法连接到设备，请确保设备在线且地址正确");
+    } else if (errorMsg.includes("保存设备列表失败")) {
+      alert("设备连接成功但保存失败，请重试");
+    } else {
+      alert(`添加设备失败: ${errorMsg}`);
+    }
   } finally {
     isLoading.value = false;
   }
@@ -389,14 +444,43 @@ async function updateSelectedDevices() {
 
   isLoading.value = true;
   try {
+    // 获取第一个选择设备的buildTime作为要更新的buildTime组
+    const selectedBuildTime =
+      selectedBuildTimes.value.length > 0 ? selectedBuildTimes.value[0] : "";
+
+    // 更新请求中使用buildTime，而不是IP列表
     updateResults.value = await App.UpdateDevices(
       username.value,
       password.value,
-      selectedDevicesList.value
+      selectedBuildTime
     );
-  } catch (error) {
+  } catch (error: unknown) {
     console.error("更新设备出错:", error);
-    alert(`更新失败: ${error}`);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    alert(`更新失败: ${errorMessage}`);
+  } finally {
+    isLoading.value = false;
+  }
+}
+
+// 新增按buildTime进行批量更新的函数
+async function updateByBuildTime(buildTime: string) {
+  if (!App || !username.value || !password.value || !selectedFile.value) {
+    alert("请填写所有字段并选择文件");
+    return;
+  }
+
+  isLoading.value = true;
+  try {
+    updateResults.value = await App.UpdateDevices(
+      username.value,
+      password.value,
+      buildTime
+    );
+  } catch (error: unknown) {
+    console.error(`更新构建时间为 ${buildTime} 的设备出错:`, error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    alert(`更新失败: ${errorMessage}`);
   } finally {
     isLoading.value = false;
   }
@@ -617,16 +701,39 @@ async function updateSelectedDevices() {
                       toggleGroup(groupKey, !isGroupAllSelected(groupKey))
                     "
                   />
-                  <span class="group-title"
-                    >{{ groupKey }}.* ({{ devices.length }}台)</span
-                  >
+                  <span class="group-title">
+                    <span v-if="groupKey === '未知版本'">未知版本</span>
+                    <span v-else>
+                      构建时间: <span class="build-time">{{ groupKey }}</span>
+                    </span>
+                    <span class="device-count"
+                      >({{ groupedDevices[groupKey].length }}台)</span
+                    >
+                  </span>
                 </label>
-                <button
-                  @click="groupExpanded[groupKey] = !groupExpanded[groupKey]"
-                  class="group-toggle-button"
-                >
-                  {{ groupExpanded[groupKey] ? "收起" : "展开" }}
-                </button>
+                <div class="group-actions">
+                  <button
+                    v-if="
+                      groupKey !== '未知版本' &&
+                      groupedDevices[groupKey].some(
+                        (d) => d.status === 'online'
+                      )
+                    "
+                    @click="updateByBuildTime(groupKey)"
+                    :disabled="
+                      isLoading || !username || !password || !selectedFile
+                    "
+                    class="update-group-button"
+                  >
+                    {{ isLoading ? "更新中..." : "更新此版本" }}
+                  </button>
+                  <button
+                    @click="groupExpanded[groupKey] = !groupExpanded[groupKey]"
+                    class="group-toggle-button"
+                  >
+                    {{ groupExpanded[groupKey] ? "收起" : "展开" }}
+                  </button>
+                </div>
               </div>
 
               <div v-if="groupExpanded[groupKey]" class="device-selection-list">
@@ -648,6 +755,12 @@ async function updateSelectedDevices() {
                     <span class="device-info">
                       <span class="device-ip">{{ device.ip }}</span>
                       <span
+                        class="device-build-time"
+                        v-if="device.buildTime && device.buildTime !== groupKey"
+                      >
+                        {{ device.buildTime }}
+                      </span>
+                      <span
                         :class="[
                           'status-dot',
                           device.status === 'online'
@@ -656,6 +769,13 @@ async function updateSelectedDevices() {
                             ? 'status-removing'
                             : 'status-offline',
                         ]"
+                        :title="
+                          device.status === 'online'
+                            ? '在线'
+                            : device.status === 'removing'
+                            ? '移除中'
+                            : '离线'
+                        "
                       ></span>
                     </span>
                   </label>
@@ -1018,6 +1138,20 @@ button:disabled {
   width: 100%;
 }
 
+.device-ip {
+  font-weight: 500;
+  margin-right: auto;
+}
+
+.device-build-time {
+  font-size: 11px;
+  color: #666;
+  margin: 0 8px;
+  background-color: #f0f0f0;
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+
 .status-dot {
   width: 10px;
   height: 10px;
@@ -1106,6 +1240,13 @@ button:disabled {
 
 .group-title {
   font-size: 14px;
+  display: flex;
+  align-items: center;
+}
+
+.group-title .build-time {
+  font-weight: 600;
+  color: var(--primary-color);
 }
 
 .group-toggle-button {
@@ -1219,5 +1360,33 @@ button:disabled {
 
 .file-help strong {
   color: #0f766e;
+}
+
+.group-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.update-group-button {
+  padding: 4px 8px;
+  font-size: 12px;
+  background-color: var(--primary-color);
+  color: white;
+}
+
+.update-group-button:hover:not(:disabled) {
+  background-color: var(--primary-hover);
+}
+
+.update-group-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.device-count {
+  font-size: 12px;
+  color: #666;
+  margin-left: 4px;
 }
 </style>

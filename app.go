@@ -216,31 +216,40 @@ func (a *App) TestDevice(ip string) (*Device, error) {
 
 // AddDevice adds a device to the list after testing it
 func (a *App) AddDevice(ip string) (*Device, error) {
+	// 测试设备是否可达，这是一个网络操作，不需要持有锁
 	device, err := a.TestDevice(ip)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("设备测试失败: %v", err)
 	}
 
+	// 加锁处理设备列表的更新
 	a.mutex.Lock()
-	defer a.mutex.Unlock()
 
-	// 使用缓存检查设备是否存在
-	if existingDevice, ok := a.deviceCache[ip]; ok {
-		// Update existing device
+	// 先检查设备是否已存在
+	existingDevice, exists := a.deviceCache[ip]
+	if exists {
+		// 更新现有设备
 		*existingDevice = *device
+		a.mutex.Unlock() // 在调用 SaveDevices 前释放锁
+
+		// 保存设备列表
 		if err := a.SaveDevices(); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("保存设备列表失败: %v", err)
 		}
 		return existingDevice, nil
 	}
 
-	// Add new device
+	// 添加新设备
 	a.devices = append(a.devices, *device)
-	// 更新缓存 - 指向实际存储位置
+	// 更新缓存，指向实际存储位置
 	a.deviceCache[ip] = &a.devices[len(a.devices)-1]
 
+	// 保存前释放锁
+	a.mutex.Unlock()
+
+	// 在锁外进行文件操作
 	if err := a.SaveDevices(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("保存设备列表失败: %v", err)
 	}
 
 	return device, nil
@@ -617,7 +626,7 @@ func (a *App) GetUploadFile() string {
 }
 
 // UpdateDevices updates all devices with the uploaded file
-func (a *App) UpdateDevices(username, password string, selectedIPs []string) []UpdateResult {
+func (a *App) UpdateDevices(username, password string, selectedBuildTime string) []UpdateResult {
 	if UploadFilePath == "" {
 		return []UpdateResult{{
 			IP:      "",
@@ -641,31 +650,23 @@ func (a *App) UpdateDevices(username, password string, selectedIPs []string) []U
 		}}
 	}
 
-	// 如果未指定selectedIPs或长度为0，默认更新所有设备
+	// 筛选具有指定buildTime的设备
 	var devices []Device
-	if len(selectedIPs) == 0 {
+	if selectedBuildTime == "" {
 		devices = allDevices
 	} else {
-		// 创建一个map用于快速查找选定的IP
-		selectedIPMap := make(map[string]bool)
-		for _, ip := range selectedIPs {
-			selectedIPMap[ip] = true
-		}
-
-		// 只添加选定的设备
-		devices = make([]Device, 0, len(selectedIPs))
+		devices = make([]Device, 0)
 		for _, device := range allDevices {
-			if selectedIPMap[device.IP] {
+			if device.BuildTime == selectedBuildTime {
 				devices = append(devices, device)
 			}
 		}
 
-		// 如果筛选后没有设备要更新，返回错误
 		if len(devices) == 0 {
 			return []UpdateResult{{
 				IP:      "",
 				Success: false,
-				Message: "No selected devices to update",
+				Message: "No devices with selected build time to update",
 			}}
 		}
 	}
