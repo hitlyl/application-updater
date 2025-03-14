@@ -1,5 +1,6 @@
 <script lang="ts" setup>
 import { ref, onMounted, computed } from "vue";
+import CameraConfig from "./components/CameraConfig.vue";
 
 // 避免TypeScript错误的类型声明
 declare global {
@@ -504,6 +505,12 @@ async function updateByBuildTime(buildTime: string) {
       >
         软件更新
       </button>
+      <button
+        :class="{ active: activeTab === 'camera' }"
+        @click="activeTab = 'camera'"
+      >
+        摄像头配置
+      </button>
     </div>
 
     <!-- Device Management Tab -->
@@ -847,6 +854,11 @@ async function updateByBuildTime(buildTime: string) {
           </tbody>
         </table>
       </div>
+    </div>
+
+    <!-- Camera Configuration Tab -->
+    <div v-if="activeTab === 'camera'" class="tab-content">
+      <CameraConfig />
     </div>
   </div>
 </template>

@@ -6,6 +6,22 @@ export function AddDevice(arg1) {
   return window['go']['main']['App']['AddDevice'](arg1);
 }
 
+export function CleanupTempFiles() {
+  return window['go']['main']['App']['CleanupTempFiles']();
+}
+
+export function ConfigureCamera(arg1, arg2, arg3, arg4, arg5, arg6) {
+  return window['go']['main']['App']['ConfigureCamera'](arg1, arg2, arg3, arg4, arg5, arg6);
+}
+
+export function ConfigureCamerasFromData(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['ConfigureCamerasFromData'](arg1, arg2, arg3, arg4, arg5);
+}
+
+export function GetCameraTasks(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GetCameraTasks'](arg1, arg2, arg3);
+}
+
 export function GetDevices() {
   return window['go']['main']['App']['GetDevices']();
 }
@@ -26,6 +42,14 @@ export function LoginToDevice(arg1, arg2, arg3) {
   return window['go']['main']['App']['LoginToDevice'](arg1, arg2, arg3);
 }
 
+export function ParseExcelSheet(arg1, arg2) {
+  return window['go']['main']['App']['ParseExcelSheet'](arg1, arg2);
+}
+
+export function ProcessExcelData(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['ProcessExcelData'](arg1, arg2, arg3, arg4, arg5);
+}
+
 export function RefreshDevices() {
   return window['go']['main']['App']['RefreshDevices']();
 }
@@ -36,6 +60,10 @@ export function RemoveDevice(arg1) {
 
 export function SaveDevices() {
   return window['go']['main']['App']['SaveDevices']();
+}
+
+export function SaveExcelData(arg1) {
+  return window['go']['main']['App']['SaveExcelData'](arg1);
 }
 
 export function ScanIPRange(arg1, arg2) {

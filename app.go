@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -48,6 +49,59 @@ type UpdateResult struct {
 	IP      string `json:"ip"`
 	Success bool   `json:"success"`
 	Message string `json:"message"`
+}
+
+// Camera represents a camera configuration
+type Camera struct {
+	TaskID     string `json:"taskId"`
+	DeviceName string `json:"deviceName"`
+	URL        string `json:"url"`
+	Types      []int  `json:"types"`
+}
+
+// CameraTaskResponse represents the task list response from device
+type CameraTaskResponse struct {
+	Code   int    `json:"code"`
+	Msg    string `json:"msg"`
+	Result struct {
+		Total     int `json:"total"`
+		PageSize  int `json:"pageSize"`
+		PageCount int `json:"pageCount"`
+		PageNo    int `json:"pageNo"`
+		Items     []struct {
+			TaskID      string   `json:"taskId"`
+			DeviceName  string   `json:"deviceName"`
+			URL         string   `json:"url"`
+			Status      int      `json:"status"`
+			ErrorReason string   `json:"errorReason"`
+			Abilities   []string `json:"abilities"`
+			Types       []int    `json:"types"`
+			Width       int      `json:"width"`
+			Height      int      `json:"height"`
+			CodeName    string   `json:"codeName"`
+		} `json:"items"`
+	} `json:"result"`
+}
+
+// CameraConfigResult represents the result of camera configuration
+type CameraConfigResult struct {
+	DeviceIP   string `json:"deviceIp"`
+	CameraName string `json:"cameraName"`
+	Success    bool   `json:"success"`
+	Message    string `json:"message"`
+}
+
+// ExcelSheetData represents the data of a sheet in the Excel file
+type ExcelSheetData struct {
+	SheetName string     `json:"sheetName"`
+	Rows      []ExcelRow `json:"rows"`
+}
+
+// ExcelRow represents a row in the Excel file
+type ExcelRow struct {
+	DeviceIP   string `json:"deviceIp"`
+	CameraName string `json:"cameraName"`
+	CameraInfo string `json:"cameraInfo"`
 }
 
 // App struct
@@ -1058,4 +1112,226 @@ func (a *App) uploadBinary(ip, token string) (bool, string) {
 // Greet returns a greeting for the given name
 func (a *App) Greet(name string) string {
 	return fmt.Sprintf("Hello %s, It's show time!", name)
+}
+
+// SaveExcelData saves the Excel data to a temporary file
+func (a *App) SaveExcelData(fileData string) (string, error) {
+	// 获取程序执行文件路径，用于创建临时目录
+	execPath, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("无法获取可执行文件路径: %w", err)
+	}
+
+	execDir := filepath.Dir(execPath)
+	tempDir := filepath.Join(execDir, "temp")
+
+	// 确保临时目录存在
+	if err := os.MkdirAll(tempDir, 0755); err != nil {
+		return "", fmt.Errorf("无法创建临时目录: %w", err)
+	}
+
+	// 创建临时文件
+	filename := fmt.Sprintf("excel_data_%d.xlsx", time.Now().UnixNano())
+	filePath := filepath.Join(tempDir, filename)
+
+	// 解码Base64数据
+	data, err := base64.StdEncoding.DecodeString(fileData)
+	if err != nil {
+		return "", fmt.Errorf("无法解码文件数据: %w", err)
+	}
+
+	// 写入文件
+	if err := os.WriteFile(filePath, data, 0644); err != nil {
+		return "", fmt.Errorf("无法写入文件: %w", err)
+	}
+
+	return filePath, nil
+}
+
+// GetCameraTasks gets the camera tasks from a device
+func (a *App) GetCameraTasks(ip, username, password string) ([]Camera, error) {
+	// 1. 先登录设备获取token
+	token, err := a.LoginToDevice(ip, username, password)
+	if err != nil {
+		return nil, fmt.Errorf("登录设备失败: %w", err)
+	}
+
+	// 2. 获取摄像头任务列表
+	url := fmt.Sprintf("http://%s:8089/api/task/list", ip)
+
+	// 创建请求体
+	requestBody, err := json.Marshal(map[string]interface{}{
+		"pageNo":   1,
+		"pageSize": 100,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("创建请求失败: %w", err)
+	}
+
+	// 创建请求
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(requestBody))
+	if err != nil {
+		return nil, fmt.Errorf("创建HTTP请求失败: %w", err)
+	}
+
+	// 设置header
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Token", token)
+
+	// 发送请求
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("发送请求失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// 解析响应
+	var response CameraTaskResponse
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return nil, fmt.Errorf("解析响应失败: %w", err)
+	}
+
+	if response.Code != 0 {
+		return nil, fmt.Errorf("获取任务列表失败: %s", response.Msg)
+	}
+
+	// 转换为Camera结构体
+	cameras := make([]Camera, 0, len(response.Result.Items))
+	for _, item := range response.Result.Items {
+		cameras = append(cameras, Camera{
+			TaskID:     item.TaskID,
+			DeviceName: item.DeviceName,
+			URL:        item.URL,
+			Types:      item.Types,
+		})
+	}
+
+	return cameras, nil
+}
+
+// ConfigureCamera configures a camera on a device
+func (a *App) ConfigureCamera(ip, username, password, cameraName, cameraURL string, algorithmType int) (bool, string) {
+	// 1. 先登录设备获取token
+	token, err := a.LoginToDevice(ip, username, password)
+	if err != nil {
+		return false, fmt.Sprintf("登录设备失败: %v", err)
+	}
+
+	// 2. 获取当前摄像头配置
+	cameras, err := a.GetCameraTasks(ip, username, password)
+	if err != nil {
+		return false, fmt.Sprintf("获取摄像头任务列表失败: %v", err)
+	}
+
+	// 检查摄像头是否已存在
+	existingCamera := false
+	for _, camera := range cameras {
+		if camera.TaskID == cameraName {
+			existingCamera = true
+			break
+		}
+	}
+
+	// 3. 根据摄像头是否存在，选择添加或修改
+	var url string
+	if existingCamera {
+		url = fmt.Sprintf("http://%s:8089/api/task/modify", ip)
+	} else {
+		url = fmt.Sprintf("http://%s:8089/api/task/add", ip)
+	}
+
+	// 创建请求体
+	requestBody, err := json.Marshal(map[string]interface{}{
+		"taskId":     cameraName,
+		"deviceName": cameraName,
+		"url":        cameraURL,
+		"types":      []int{algorithmType},
+	})
+	if err != nil {
+		return false, fmt.Sprintf("创建请求失败: %v", err)
+	}
+
+	// 创建请求
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(requestBody))
+	if err != nil {
+		return false, fmt.Sprintf("创建HTTP请求失败: %v", err)
+	}
+
+	// 设置header
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Token", token)
+
+	// 发送请求
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return false, fmt.Sprintf("发送请求失败: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// 读取响应
+	var response struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return false, fmt.Sprintf("解析响应失败: %v", err)
+	}
+
+	if response.Code != 0 {
+		return false, fmt.Sprintf("配置摄像头失败: %s", response.Msg)
+	}
+
+	if existingCamera {
+		return true, "修改摄像头配置成功"
+	} else {
+		return true, "添加摄像头配置成功"
+	}
+}
+
+// ConfigureCamerasFromData configures cameras based on the provided data
+func (a *App) ConfigureCamerasFromData(deviceConfigs []ExcelRow, username, password, urlTemplate string, algorithmType int) []CameraConfigResult {
+	results := make([]CameraConfigResult, 0, len(deviceConfigs))
+
+	// 按设备IP分组
+	deviceGroups := make(map[string][]ExcelRow)
+	for _, config := range deviceConfigs {
+		if config.DeviceIP != "" && config.CameraName != "" && config.CameraInfo != "/" {
+			deviceGroups[config.DeviceIP] = append(deviceGroups[config.DeviceIP], config)
+		}
+	}
+
+	// 为每个设备配置摄像头
+	for deviceIP, configs := range deviceGroups {
+		for _, config := range configs {
+			// 从摄像头信息中提取IP
+			parts := strings.Split(config.CameraInfo, "/")
+			if len(parts) >= 1 {
+				cameraIP := parts[0]
+
+				// 使用模板替换IP
+				cameraURL := strings.Replace(urlTemplate, "<ip>", cameraIP, -1)
+
+				// 配置摄像头
+				success, message := a.ConfigureCamera(deviceIP, username, password, config.CameraName, cameraURL, algorithmType)
+
+				// 记录结果
+				results = append(results, CameraConfigResult{
+					DeviceIP:   deviceIP,
+					CameraName: config.CameraName,
+					Success:    success,
+					Message:    message,
+				})
+			} else {
+				// 摄像头信息格式错误
+				results = append(results, CameraConfigResult{
+					DeviceIP:   deviceIP,
+					CameraName: config.CameraName,
+					Success:    false,
+					Message:    "摄像头信息格式错误",
+				})
+			}
+		}
+	}
+
+	return results
 }

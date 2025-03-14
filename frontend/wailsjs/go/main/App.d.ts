@@ -4,6 +4,14 @@ import {main} from '../models';
 
 export function AddDevice(arg1:string):Promise<main.Device>;
 
+export function CleanupTempFiles():Promise<void>;
+
+export function ConfigureCamera(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:number):Promise<boolean|string>;
+
+export function ConfigureCamerasFromData(arg1:Array<main.ExcelRow>,arg2:string,arg3:string,arg4:string,arg5:number):Promise<Array<main.CameraConfigResult>>;
+
+export function GetCameraTasks(arg1:string,arg2:string,arg3:string):Promise<Array<main.Camera>>;
+
 export function GetDevices():Promise<Array<main.Device>>;
 
 export function GetUploadFile():Promise<string>;
@@ -14,11 +22,17 @@ export function LoadDevices():Promise<void>;
 
 export function LoginToDevice(arg1:string,arg2:string,arg3:string):Promise<string>;
 
+export function ParseExcelSheet(arg1:string,arg2:number):Promise<Array<main.ExcelRow>>;
+
+export function ProcessExcelData(arg1:Array<main.ExcelRow>,arg2:string,arg3:string,arg4:string,arg5:number):Promise<Array<main.CameraConfigResult>>;
+
 export function RefreshDevices():Promise<Array<main.Device>>;
 
 export function RemoveDevice(arg1:string):Promise<void>;
 
 export function SaveDevices():Promise<void>;
+
+export function SaveExcelData(arg1:string):Promise<string>;
 
 export function ScanIPRange(arg1:string,arg2:string):Promise<Array<main.Device>>;
 
