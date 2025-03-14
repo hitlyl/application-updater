@@ -489,7 +489,7 @@ async function updateByBuildTime(buildTime: string) {
 
 <template>
   <div class="container">
-    <h1>设备更新器</h1>
+    <h1>设备更新管理</h1>
 
     <div class="tabs">
       <button
@@ -502,7 +502,7 @@ async function updateByBuildTime(buildTime: string) {
         :class="{ active: activeTab === 'update' }"
         @click="activeTab = 'update'"
       >
-        更新设备
+        软件更新
       </button>
     </div>
 

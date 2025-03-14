@@ -1,4 +1,4 @@
-# 这是一个设备批量更新程序，功能分为两部分，IP 管理，程序更新
+# 这是一个设备批量更新程序，功能分为三部分，设备管理，程序更新，批量操作
 
 ## 设备管理
 
@@ -34,3 +34,57 @@
 Content-Type: application/octet-stream
 
 ### 提供一个上传按钮，选择上传文件后，对设备列表中的每个设备，依次调用 登录，上传。并显示每个设备的操作结果
+
+
+#批量配置摄像头
+## 上传excel文件
+### excel文件有多个sheet，每个sheet 使用tab方式显示，每个tab按表格显示该sheet内容。该sheet的格式为 使用后三列，倒数第三列为设备ip（此列用到了合并单元格，需要处理，即如果为空，则为上一列的数据）,倒数第二列为摄像头名称，倒数第一列为摄像头的ip/掩码/网关。 过滤掉数据为 "/" 字符串的内容
+
+### 选择一个tab后，下方需要配置 设备的用户名，密码，摄像头url模版（例如 rtsp://admin:123@<ip>/av/stream)
+算法选择单选框 (6:精准喷淋,7:牛行为统计)
+### 点击配置按钮后，根据excel表格，每个设备有1个或多个摄像头， 根据设备的ip，用户名，密码，先调用login获取token, 再调用 http POST 
+header包括获取的 Token
+http://192.168.3.123:8089/api/task/list
+载荷 {"pageNo":1,"pageSize":100}
+获取当前已有的摄像头配置。
+返回数据示例为
+{
+    "code": 0,
+    "msg": "ok",
+    "result": {
+        "total": 1,
+        "pageSize": 100,
+        "pageCount": 1,
+        "pageNo": 1,
+        "items": [
+            {
+                "taskId": "test1",
+                "deviceName": "test1",
+                "url": "rtsp://192.168.3.164:30554/record/cam_video/cow5.mp4",
+                "status": 0,
+                "errorReason": "",
+                "abilities": [
+                    "区域入侵检测(yolox)"
+                ],
+                "types": [
+                    5
+                ],
+                "width": 1280,
+                "height": 736,
+                "codeName": "h264"
+            }]
+    }
+}
+
+taskId为该设备下该摄像头唯一标识，为摄像头的名称。
+如果该摄像头没有配置，则调用添加接口
+POST
+http://192.168.3.123:8089/api/task/add
+载荷:
+{"taskId":"摄像头名称","deviceName":"摄像头名称","url":"摄像头url","types":[算法id]}
+
+如果该摄像头已经配置，则调用修改接口
+POST
+http://192.168.3.123:8089/api/task/modify
+载荷:
+{"taskId":"摄像头名称","deviceName":"摄像头名称","url":"摄像头url","types":[算法id]}
