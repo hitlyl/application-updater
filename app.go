@@ -99,9 +99,80 @@ type ExcelSheetData struct {
 
 // ExcelRow represents a row in the Excel file
 type ExcelRow struct {
-	DeviceIP   string `json:"deviceIp"`
-	CameraName string `json:"cameraName"`
-	CameraInfo string `json:"cameraInfo"`
+	DeviceIP    string `json:"deviceIp"`
+	CameraName  string `json:"cameraName"`
+	CameraInfo  string `json:"cameraInfo"`
+	DeviceIndex int    `json:"deviceIndex"`
+	Selected    bool   `json:"selected"`
+}
+
+// DeviceInfo represents device information in camera configuration
+type DeviceInfo struct {
+	CodeName   string `json:"codeName"`
+	Name       string `json:"name"`
+	Resolution string `json:"resolution"`
+	URL        string `json:"url"`
+	Width      int    `json:"width"`
+	Height     int    `json:"height"`
+}
+
+// CameraConfig represents the camera configuration
+type CameraConfig struct {
+	Device     DeviceInfo  `json:"device"`
+	Algorithms []Algorithm `json:"algorithms"`
+}
+
+// Algorithm represents a camera algorithm configuration
+type Algorithm struct {
+	Type           int          `json:"Type"`
+	TrackInterval  int          `json:"TrackInterval"`
+	DetectInterval int          `json:"DetectInterval"`
+	AlarmInterval  int          `json:"AlarmInterval"`
+	Threshold      int          `json:"threshold"`
+	TargetSize     TargetSize   `json:"TargetSize"`
+	DetectInfos    []DetectInfo `json:"DetectInfos"`
+	TripWire       interface{}  `json:"TripWire"`
+	ExtraConfig    ExtraConfig  `json:"ExtraConfig"`
+}
+
+// TargetSize represents the target size configuration
+type TargetSize struct {
+	MinDetect int `json:"MinDetect"`
+	MaxDetect int `json:"MaxDetect"`
+}
+
+// DetectInfo represents detection information
+type DetectInfo struct {
+	Id      int            `json:"Id"`
+	HotArea []HotAreaPoint `json:"HotArea"`
+}
+
+// HotAreaPoint represents a point in the hot area
+type HotAreaPoint struct {
+	X int `json:"X"`
+	Y int `json:"Y"`
+}
+
+// ExtraConfig represents extra configuration for algorithms
+type ExtraConfig struct {
+	CameraIndex string     `json:"camera_index"`
+	Defs        []ExtraDef `json:"defs"`
+}
+
+// ExtraDef represents a definition in extra configuration
+type ExtraDef struct {
+	Name    string `json:"Name"`
+	Desc    string `json:"Desc"`
+	Type    string `json:"Type"`
+	Unit    string `json:"Unit"`
+	Default string `json:"Default"`
+}
+
+// CameraConfigResponse represents the response for camera configuration
+type CameraConfigResponse struct {
+	Code   int          `json:"code"`
+	Msg    string       `json:"msg"`
+	Result CameraConfig `json:"result"`
 }
 
 // App struct
@@ -707,7 +778,11 @@ func (a *App) RefreshDevices() []Device {
 
 // LoginToDevice logs into a device and returns a token
 func (a *App) LoginToDevice(ip, username, password string) (string, error) {
+	fmt.Printf("DEBUG: 开始登录设备: IP=%s, 用户名=%s\n", ip, username)
+
 	url := fmt.Sprintf("http://%s:8089/api/login", ip)
+	fmt.Printf("DEBUG: 请求URL: %s\n", url)
+
 	data := map[string]string{
 		"username": username,
 		"password": password,
@@ -716,8 +791,10 @@ func (a *App) LoginToDevice(ip, username, password string) (string, error) {
 	// 预分配缓冲区
 	jsonData, err := json.Marshal(data)
 	if err != nil {
+		fmt.Printf("ERROR: 创建请求失败: %v\n", err)
 		return "", err
 	}
+	fmt.Printf("DEBUG: 请求体: %s\n", string(jsonData))
 
 	// 创建一个带有超时的上下文
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -726,27 +803,47 @@ func (a *App) LoginToDevice(ip, username, password string) (string, error) {
 	// 创建请求
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
+		fmt.Printf("ERROR: 创建HTTP请求失败: %v\n", err)
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	fmt.Printf("DEBUG: 请求头: Content-Type=%s\n", req.Header.Get("Content-Type"))
 
 	resp, err := a.client.Do(req)
 	if err != nil {
+		fmt.Printf("ERROR: 发送请求失败: %v\n", err)
 		return "", err
 	}
 	defer resp.Body.Close()
 
-	// 使用流式解码，避免读取整个响应到内存
+	fmt.Printf("DEBUG: 响应状态码: %d\n", resp.StatusCode)
+
+	// 读取完整响应体以便记录日志
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Printf("ERROR: 读取响应体失败: %v\n", err)
+		return "", err
+	}
+
+	fmt.Printf("DEBUG: 响应体: %s\n", string(respBody))
+
+	// 将读取的响应体转回io.Reader用于解析
+	resp.Body = io.NopCloser(bytes.NewBuffer(respBody))
+
+	// 解析响应
 	var response LoginResponse
 	decoder := json.NewDecoder(resp.Body)
 	if err := decoder.Decode(&response); err != nil {
+		fmt.Printf("ERROR: 解析响应失败: %v\n", err)
 		return "", err
 	}
 
 	if response.Code != 0 {
+		fmt.Printf("ERROR: 登录失败: 代码=%d, 消息=%s\n", response.Code, response.Msg)
 		return "", fmt.Errorf("login failed: %s", response.Msg)
 	}
 
+	fmt.Printf("DEBUG: 登录成功，获取到Token: %s\n", response.Result.Token)
 	return response.Result.Token, nil
 }
 
@@ -1150,48 +1247,81 @@ func (a *App) SaveExcelData(fileData string) (string, error) {
 
 // GetCameraTasks gets the camera tasks from a device
 func (a *App) GetCameraTasks(ip, username, password string) ([]Camera, error) {
+	fmt.Printf("DEBUG: 开始获取摄像头任务列表: IP=%s\n", ip)
+
 	// 1. 先登录设备获取token
 	token, err := a.LoginToDevice(ip, username, password)
 	if err != nil {
+		fmt.Printf("ERROR: 登录设备失败: %v\n", err)
 		return nil, fmt.Errorf("登录设备失败: %w", err)
 	}
+	fmt.Printf("DEBUG: 成功登录设备，获取到Token\n")
 
 	// 2. 获取摄像头任务列表
 	url := fmt.Sprintf("http://%s:8089/api/task/list", ip)
+	fmt.Printf("DEBUG: 请求URL: %s\n", url)
 
 	// 创建请求体
-	requestBody, err := json.Marshal(map[string]interface{}{
+	requestData := map[string]interface{}{
 		"pageNo":   1,
 		"pageSize": 100,
-	})
+	}
+	requestBody, err := json.Marshal(requestData)
 	if err != nil {
+		fmt.Printf("ERROR: 创建请求失败: %v\n", err)
 		return nil, fmt.Errorf("创建请求失败: %w", err)
 	}
+	fmt.Printf("DEBUG: 请求体: %s\n", string(requestBody))
 
 	// 创建请求
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(requestBody))
 	if err != nil {
+		fmt.Printf("ERROR: 创建HTTP请求失败: %v\n", err)
 		return nil, fmt.Errorf("创建HTTP请求失败: %w", err)
 	}
 
 	// 设置header
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Token", token)
+	fmt.Printf("DEBUG: 请求头: Content-Type=%s, Token=%s\n", req.Header.Get("Content-Type"), req.Header.Get("Token"))
 
 	// 发送请求
 	resp, err := a.client.Do(req)
 	if err != nil {
+		fmt.Printf("ERROR: 发送请求失败: %v\n", err)
 		return nil, fmt.Errorf("发送请求失败: %w", err)
 	}
 	defer resp.Body.Close()
 
+	fmt.Printf("DEBUG: 响应状态码: %d\n", resp.StatusCode)
+
+	// 读取完整响应体以便记录日志
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Printf("ERROR: 读取响应体失败: %v\n", err)
+		return nil, fmt.Errorf("读取响应体失败: %w", err)
+	}
+
+	// 打印响应体，但限制长度以避免日志过大
+	respBodyStr := string(respBody)
+	if len(respBodyStr) > 1000 {
+		fmt.Printf("DEBUG: 响应体(部分): %s...(已截断，总长度 %d 字节)\n", respBodyStr[:1000], len(respBodyStr))
+	} else {
+		fmt.Printf("DEBUG: 响应体: %s\n", respBodyStr)
+	}
+
+	// 将读取的响应体转回io.Reader用于解析
+	resp.Body = io.NopCloser(bytes.NewBuffer(respBody))
+
 	// 解析响应
 	var response CameraTaskResponse
 	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		fmt.Printf("ERROR: 解析响应失败: %v\n", err)
 		return nil, fmt.Errorf("解析响应失败: %w", err)
 	}
 
 	if response.Code != 0 {
+		fmt.Printf("ERROR: 获取任务列表失败: 代码=%d, 消息=%s\n", response.Code, response.Msg)
 		return nil, fmt.Errorf("获取任务列表失败: %s", response.Msg)
 	}
 
@@ -1206,28 +1336,41 @@ func (a *App) GetCameraTasks(ip, username, password string) ([]Camera, error) {
 		})
 	}
 
+	fmt.Printf("DEBUG: 成功获取到 %d 个摄像头任务\n", len(cameras))
+	// 打印每个任务的ID
+	for i, camera := range cameras {
+		fmt.Printf("DEBUG: 任务 %d: ID=%s, 设备名=%s\n", i+1, camera.TaskID, camera.DeviceName)
+	}
+
 	return cameras, nil
 }
 
 // ConfigureCamera configures a camera on a device
 func (a *App) ConfigureCamera(ip, username, password, cameraName, cameraURL string, algorithmType int) (bool, string) {
+	fmt.Printf("DEBUG: 开始配置摄像头: IP=%s, 摄像头名称=%s, URL=%s, 算法类型=%d\n", ip, cameraName, cameraURL, algorithmType)
+
 	// 1. 先登录设备获取token
 	token, err := a.LoginToDevice(ip, username, password)
 	if err != nil {
+		fmt.Printf("ERROR: 登录设备失败: %v\n", err)
 		return false, fmt.Sprintf("登录设备失败: %v", err)
 	}
+	fmt.Printf("DEBUG: 成功登录设备，获取到Token\n")
 
 	// 2. 获取当前摄像头配置
 	cameras, err := a.GetCameraTasks(ip, username, password)
 	if err != nil {
+		fmt.Printf("ERROR: 获取摄像头任务列表失败: %v\n", err)
 		return false, fmt.Sprintf("获取摄像头任务列表失败: %v", err)
 	}
+	fmt.Printf("DEBUG: 获取到 %d 个摄像头任务\n", len(cameras))
 
 	// 检查摄像头是否已存在
 	existingCamera := false
 	for _, camera := range cameras {
 		if camera.TaskID == cameraName {
 			existingCamera = true
+			fmt.Printf("DEBUG: 找到已存在的摄像头任务: %s\n", cameraName)
 			break
 		}
 	}
@@ -1236,37 +1379,60 @@ func (a *App) ConfigureCamera(ip, username, password, cameraName, cameraURL stri
 	var url string
 	if existingCamera {
 		url = fmt.Sprintf("http://%s:8089/api/task/modify", ip)
+		fmt.Printf("DEBUG: 摄像头任务已存在，使用修改API\n")
 	} else {
 		url = fmt.Sprintf("http://%s:8089/api/task/add", ip)
+		fmt.Printf("DEBUG: 摄像头任务不存在，使用添加API\n")
 	}
+	fmt.Printf("DEBUG: 请求URL: %s\n", url)
 
 	// 创建请求体
-	requestBody, err := json.Marshal(map[string]interface{}{
+	requestData := map[string]interface{}{
 		"taskId":     cameraName,
 		"deviceName": cameraName,
 		"url":        cameraURL,
 		"types":      []int{algorithmType},
-	})
+	}
+	requestBody, err := json.Marshal(requestData)
 	if err != nil {
+		fmt.Printf("ERROR: 创建请求失败: %v\n", err)
 		return false, fmt.Sprintf("创建请求失败: %v", err)
 	}
+	fmt.Printf("DEBUG: 请求体: %s\n", string(requestBody))
 
 	// 创建请求
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(requestBody))
 	if err != nil {
+		fmt.Printf("ERROR: 创建HTTP请求失败: %v\n", err)
 		return false, fmt.Sprintf("创建HTTP请求失败: %v", err)
 	}
 
 	// 设置header
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Token", token)
+	fmt.Printf("DEBUG: 请求头: Content-Type=%s, Token=%s\n", req.Header.Get("Content-Type"), req.Header.Get("Token"))
 
 	// 发送请求
 	resp, err := a.client.Do(req)
 	if err != nil {
+		fmt.Printf("ERROR: 发送请求失败: %v\n", err)
 		return false, fmt.Sprintf("发送请求失败: %v", err)
 	}
 	defer resp.Body.Close()
+
+	fmt.Printf("DEBUG: 响应状态码: %d\n", resp.StatusCode)
+
+	// 读取完整响应体以便记录日志
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Printf("ERROR: 读取响应体失败: %v\n", err)
+		return false, fmt.Sprintf("读取响应体失败: %v", err)
+	}
+
+	fmt.Printf("DEBUG: 响应体: %s\n", string(respBody))
+
+	// 将读取的响应体转回io.Reader用于解析
+	resp.Body = io.NopCloser(bytes.NewBuffer(respBody))
 
 	// 读取响应
 	var response struct {
@@ -1274,23 +1440,587 @@ func (a *App) ConfigureCamera(ip, username, password, cameraName, cameraURL stri
 		Msg  string `json:"msg"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		fmt.Printf("ERROR: 解析响应失败: %v\n", err)
 		return false, fmt.Sprintf("解析响应失败: %v", err)
 	}
 
 	if response.Code != 0 {
+		fmt.Printf("ERROR: 配置摄像头失败: 代码=%d, 消息=%s\n", response.Code, response.Msg)
 		return false, fmt.Sprintf("配置摄像头失败: %s", response.Msg)
 	}
 
 	if existingCamera {
+		fmt.Printf("DEBUG: 成功修改摄像头配置: %s\n", cameraName)
 		return true, "修改摄像头配置成功"
 	} else {
+		fmt.Printf("DEBUG: 成功添加摄像头配置: %s\n", cameraName)
 		return true, "添加摄像头配置成功"
 	}
 }
 
+// GetCameraConfig gets the configuration of a camera
+func (a *App) GetCameraConfig(ip, username, password, taskId string) (*CameraConfig, error) {
+	fmt.Printf("DEBUG: 开始获取摄像头配置: IP=%s, 任务ID=%s\n", ip, taskId)
+
+	// 1. 先登录设备获取token
+	token, err := a.LoginToDevice(ip, username, password)
+	if err != nil {
+		fmt.Printf("ERROR: 登录设备失败: %v\n", err)
+		return nil, fmt.Errorf("登录设备失败: %w", err)
+	}
+	fmt.Printf("DEBUG: 成功登录设备，获取到Token\n")
+
+	// 2. 获取摄像头配置
+	url := fmt.Sprintf("http://%s:8089/api/config/get", ip)
+	fmt.Printf("DEBUG: 请求URL: %s\n", url)
+
+	// 创建请求体
+	requestData := map[string]string{
+		"taskId": taskId,
+	}
+	requestBody, err := json.Marshal(requestData)
+	if err != nil {
+		fmt.Printf("ERROR: 创建请求失败: %v\n", err)
+		return nil, fmt.Errorf("创建请求失败: %w", err)
+	}
+	fmt.Printf("DEBUG: 请求体: %s\n", string(requestBody))
+
+	// 创建请求
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(requestBody))
+	if err != nil {
+		fmt.Printf("ERROR: 创建HTTP请求失败: %v\n", err)
+		return nil, fmt.Errorf("创建HTTP请求失败: %w", err)
+	}
+
+	// 设置header
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Token", token)
+	fmt.Printf("DEBUG: 请求头: Content-Type=%s, Token=%s\n", req.Header.Get("Content-Type"), req.Header.Get("Token"))
+
+	// 发送请求
+	resp, err := a.client.Do(req)
+	if err != nil {
+		fmt.Printf("ERROR: 发送请求失败: %v\n", err)
+		return nil, fmt.Errorf("发送请求失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	fmt.Printf("DEBUG: 响应状态码: %d\n", resp.StatusCode)
+
+	// 读取完整响应体以便记录日志
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Printf("ERROR: 读取响应体失败: %v\n", err)
+		return nil, fmt.Errorf("读取响应体失败: %w", err)
+	}
+
+	fmt.Printf("DEBUG: 响应体: %s\n", string(respBody))
+
+	// 将读取的响应体转回io.Reader用于解析
+	resp.Body = io.NopCloser(bytes.NewBuffer(respBody))
+
+	// 解析响应
+	var response CameraConfigResponse
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		fmt.Printf("ERROR: 解析响应失败: %v\n", err)
+		return nil, fmt.Errorf("解析响应失败: %w", err)
+	}
+
+	if response.Code != 0 {
+		fmt.Printf("ERROR: 获取摄像头配置失败: 代码=%d, 消息=%s\n", response.Code, response.Msg)
+		return nil, fmt.Errorf("获取摄像头配置失败: %s", response.Msg)
+	}
+
+	fmt.Printf("DEBUG: 成功获取摄像头配置\n")
+	return &response.Result, nil
+}
+
+// SetCameraIndex sets the index of a camera
+func (a *App) SetCameraIndex(ip, username, password, taskId string, index int) (bool, string) {
+	fmt.Printf("DEBUG: 开始设置摄像头索引: IP=%s, 任务ID=%s, 索引=%d\n", ip, taskId, index)
+
+	// 1. 获取摄像头配置
+	config, err := a.GetCameraConfig(ip, username, password, taskId)
+	if err != nil {
+		fmt.Printf("ERROR: 获取摄像头配置失败: %v\n", err)
+		return false, fmt.Sprintf("获取摄像头配置失败: %v", err)
+	}
+	fmt.Printf("DEBUG: 成功获取摄像头配置\n")
+
+	// 2. 修改摄像头索引
+	var modified bool
+	for i := range config.Algorithms {
+		// 修改ExtraConfig中的camera_index
+		if config.Algorithms[i].ExtraConfig.CameraIndex != fmt.Sprintf("%d", index) {
+			fmt.Printf("DEBUG: 更新算法 %d 的摄像头索引: %s -> %d\n", i, config.Algorithms[i].ExtraConfig.CameraIndex, index)
+			config.Algorithms[i].ExtraConfig.CameraIndex = fmt.Sprintf("%d", index)
+			modified = true
+		}
+	}
+
+	if !modified {
+		fmt.Printf("DEBUG: 摄像头索引已经是正确的值 %d，无需修改\n", index)
+		return true, "摄像头索引已经是正确的值，无需修改"
+	}
+
+	// 3. 更新摄像头配置
+	token, err := a.LoginToDevice(ip, username, password)
+	if err != nil {
+		fmt.Printf("ERROR: 登录设备失败: %v\n", err)
+		return false, fmt.Sprintf("登录设备失败: %v", err)
+	}
+	fmt.Printf("DEBUG: 成功登录设备，获取到Token\n")
+
+	url := fmt.Sprintf("http://%s:8089/api/config/mod", ip)
+	fmt.Printf("DEBUG: 请求URL: %s\n", url)
+
+	// 按照FEATURE.md中的示例格式构造请求载荷
+	requestData := map[string]interface{}{
+		"TaskID":    taskId,
+		"Algorithm": config.Algorithms[0], // 使用第一个算法（通常只有一个）
+	}
+
+	requestBody, err := json.Marshal(requestData)
+	if err != nil {
+		fmt.Printf("ERROR: 创建请求失败: %v\n", err)
+		return false, fmt.Sprintf("创建请求失败: %v", err)
+	}
+
+	// 打印请求体，但限制长度以避免日志过大
+	requestBodyStr := string(requestBody)
+	if len(requestBodyStr) > 1000 {
+		fmt.Printf("DEBUG: 请求体(部分): %s...(已截断，总长度 %d 字节)\n", requestBodyStr[:1000], len(requestBodyStr))
+	} else {
+		fmt.Printf("DEBUG: 请求体: %s\n", requestBodyStr)
+	}
+
+	// 创建请求
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(requestBody))
+	if err != nil {
+		fmt.Printf("ERROR: 创建HTTP请求失败: %v\n", err)
+		return false, fmt.Sprintf("创建HTTP请求失败: %v", err)
+	}
+
+	// 设置header
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Token", token)
+	fmt.Printf("DEBUG: 请求头: Content-Type=%s, Token=%s\n", req.Header.Get("Content-Type"), req.Header.Get("Token"))
+
+	// 发送请求
+	resp, err := a.client.Do(req)
+	if err != nil {
+		fmt.Printf("ERROR: 发送请求失败: %v\n", err)
+		return false, fmt.Sprintf("发送请求失败: %v", err)
+	}
+	defer resp.Body.Close()
+
+	fmt.Printf("DEBUG: 响应状态码: %d\n", resp.StatusCode)
+
+	// 读取完整响应体以便记录日志
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Printf("ERROR: 读取响应体失败: %v\n", err)
+		return false, fmt.Sprintf("读取响应体失败: %v", err)
+	}
+
+	fmt.Printf("DEBUG: 响应体: %s\n", string(respBody))
+
+	// 将读取的响应体转回io.Reader用于解析
+	resp.Body = io.NopCloser(bytes.NewBuffer(respBody))
+
+	// 读取响应
+	var response struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		fmt.Printf("ERROR: 解析响应失败: %v\n", err)
+		return false, fmt.Sprintf("解析响应失败: %v", err)
+	}
+
+	if response.Code != 0 {
+		fmt.Printf("ERROR: 设置摄像头索引失败: 代码=%d, 消息=%s\n", response.Code, response.Msg)
+		return false, fmt.Sprintf("设置摄像头索引失败: %s", response.Msg)
+	}
+
+	fmt.Printf("DEBUG: 成功将摄像头索引设置为 %d\n", index)
+	return true, fmt.Sprintf("成功将摄像头索引设置为 %d", index)
+}
+
+// ConfigureCameraWithToken configures a camera on a device using an existing token
+func (a *App) ConfigureCameraWithToken(ip, token, cameraName, cameraURL string, algorithmType int) (bool, string) {
+	fmt.Printf("DEBUG: 开始配置摄像头: IP=%s, 摄像头名称=%s, URL=%s, 算法类型=%d\n", ip, cameraName, cameraURL, algorithmType)
+
+	// 获取当前摄像头配置，使用已有的 token
+	cameras, err := a.GetCameraTasksWithToken(ip, token)
+	if err != nil {
+		fmt.Printf("ERROR: 获取摄像头任务列表失败: %v\n", err)
+		return false, fmt.Sprintf("获取摄像头任务列表失败: %v", err)
+	}
+	fmt.Printf("DEBUG: 获取到 %d 个摄像头任务\n", len(cameras))
+
+	// 检查摄像头是否已存在
+	existingCamera := false
+	for _, camera := range cameras {
+		if camera.TaskID == cameraName {
+			existingCamera = true
+			fmt.Printf("DEBUG: 找到已存在的摄像头任务: %s\n", cameraName)
+			break
+		}
+	}
+
+	// 根据摄像头是否存在，选择添加或修改
+	var url string
+	if existingCamera {
+		url = fmt.Sprintf("http://%s:8089/api/task/modify", ip)
+		fmt.Printf("DEBUG: 摄像头任务已存在，使用修改API\n")
+	} else {
+		url = fmt.Sprintf("http://%s:8089/api/task/add", ip)
+		fmt.Printf("DEBUG: 摄像头任务不存在，使用添加API\n")
+	}
+	fmt.Printf("DEBUG: 请求URL: %s\n", url)
+
+	// 创建请求体
+	requestData := map[string]interface{}{
+		"taskId":     cameraName,
+		"deviceName": cameraName,
+		"url":        cameraURL,
+		"types":      []int{algorithmType},
+	}
+	requestBody, err := json.Marshal(requestData)
+	if err != nil {
+		fmt.Printf("ERROR: 创建请求失败: %v\n", err)
+		return false, fmt.Sprintf("创建请求失败: %v", err)
+	}
+	fmt.Printf("DEBUG: 请求体: %s\n", string(requestBody))
+
+	// 创建请求
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(requestBody))
+	if err != nil {
+		fmt.Printf("ERROR: 创建HTTP请求失败: %v\n", err)
+		return false, fmt.Sprintf("创建HTTP请求失败: %v", err)
+	}
+
+	// 设置header
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Token", token)
+	fmt.Printf("DEBUG: 请求头: Content-Type=%s, Token=%s\n", req.Header.Get("Content-Type"), req.Header.Get("Token"))
+
+	// 发送请求
+	resp, err := a.client.Do(req)
+	if err != nil {
+		fmt.Printf("ERROR: 发送请求失败: %v\n", err)
+		return false, fmt.Sprintf("发送请求失败: %v", err)
+	}
+	defer resp.Body.Close()
+
+	fmt.Printf("DEBUG: 响应状态码: %d\n", resp.StatusCode)
+
+	// 读取完整响应体以便记录日志
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Printf("ERROR: 读取响应体失败: %v\n", err)
+		return false, fmt.Sprintf("读取响应体失败: %v", err)
+	}
+
+	fmt.Printf("DEBUG: 响应体: %s\n", string(respBody))
+
+	// 将读取的响应体转回io.Reader用于解析
+	resp.Body = io.NopCloser(bytes.NewBuffer(respBody))
+
+	// 读取响应
+	var response struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		fmt.Printf("ERROR: 解析响应失败: %v\n", err)
+		return false, fmt.Sprintf("解析响应失败: %v", err)
+	}
+
+	if response.Code != 0 {
+		fmt.Printf("ERROR: 配置摄像头失败: 代码=%d, 消息=%s\n", response.Code, response.Msg)
+		return false, fmt.Sprintf("配置摄像头失败: %s", response.Msg)
+	}
+
+	if existingCamera {
+		fmt.Printf("DEBUG: 成功修改摄像头配置: %s\n", cameraName)
+		return true, "修改摄像头配置成功"
+	} else {
+		fmt.Printf("DEBUG: 成功添加摄像头配置: %s\n", cameraName)
+		return true, "添加摄像头配置成功"
+	}
+}
+
+// GetCameraTasksWithToken gets the camera tasks from a device using an existing token
+func (a *App) GetCameraTasksWithToken(ip, token string) ([]Camera, error) {
+	fmt.Printf("DEBUG: 开始获取摄像头任务列表: IP=%s\n", ip)
+
+	// 获取摄像头任务列表
+	url := fmt.Sprintf("http://%s:8089/api/task/list", ip)
+	fmt.Printf("DEBUG: 请求URL: %s\n", url)
+
+	// 创建请求体
+	requestData := map[string]interface{}{
+		"pageNo":   1,
+		"pageSize": 100,
+	}
+	requestBody, err := json.Marshal(requestData)
+	if err != nil {
+		fmt.Printf("ERROR: 创建请求失败: %v\n", err)
+		return nil, fmt.Errorf("创建请求失败: %w", err)
+	}
+	fmt.Printf("DEBUG: 请求体: %s\n", string(requestBody))
+
+	// 创建请求
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(requestBody))
+	if err != nil {
+		fmt.Printf("ERROR: 创建HTTP请求失败: %v\n", err)
+		return nil, fmt.Errorf("创建HTTP请求失败: %w", err)
+	}
+
+	// 设置header
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Token", token)
+	fmt.Printf("DEBUG: 请求头: Content-Type=%s, Token=%s\n", req.Header.Get("Content-Type"), req.Header.Get("Token"))
+
+	// 发送请求
+	resp, err := a.client.Do(req)
+	if err != nil {
+		fmt.Printf("ERROR: 发送请求失败: %v\n", err)
+		return nil, fmt.Errorf("发送请求失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	fmt.Printf("DEBUG: 响应状态码: %d\n", resp.StatusCode)
+
+	// 读取完整响应体以便记录日志
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Printf("ERROR: 读取响应体失败: %v\n", err)
+		return nil, fmt.Errorf("读取响应体失败: %w", err)
+	}
+
+	// 打印响应体，但限制长度以避免日志过大
+	respBodyStr := string(respBody)
+	if len(respBodyStr) > 1000 {
+		fmt.Printf("DEBUG: 响应体(部分): %s...(已截断，总长度 %d 字节)\n", respBodyStr[:1000], len(respBodyStr))
+	} else {
+		fmt.Printf("DEBUG: 响应体: %s\n", respBodyStr)
+	}
+
+	// 将读取的响应体转回io.Reader用于解析
+	resp.Body = io.NopCloser(bytes.NewBuffer(respBody))
+
+	// 解析响应
+	var response CameraTaskResponse
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		fmt.Printf("ERROR: 解析响应失败: %v\n", err)
+		return nil, fmt.Errorf("解析响应失败: %w", err)
+	}
+
+	if response.Code != 0 {
+		fmt.Printf("ERROR: 获取任务列表失败: 代码=%d, 消息=%s\n", response.Code, response.Msg)
+		return nil, fmt.Errorf("获取任务列表失败: %s", response.Msg)
+	}
+
+	// 转换为Camera结构体
+	cameras := make([]Camera, 0, len(response.Result.Items))
+	for _, item := range response.Result.Items {
+		cameras = append(cameras, Camera{
+			TaskID:     item.TaskID,
+			DeviceName: item.DeviceName,
+			URL:        item.URL,
+			Types:      item.Types,
+		})
+	}
+
+	fmt.Printf("DEBUG: 成功获取到 %d 个摄像头任务\n", len(cameras))
+	// 打印每个任务的ID
+	for i, camera := range cameras {
+		fmt.Printf("DEBUG: 任务 %d: ID=%s, 设备名=%s\n", i+1, camera.TaskID, camera.DeviceName)
+	}
+
+	return cameras, nil
+}
+
+// GetCameraConfigWithToken gets the configuration of a camera using an existing token
+func (a *App) GetCameraConfigWithToken(ip, token, taskId string) (*CameraConfig, error) {
+	fmt.Printf("DEBUG: 开始获取摄像头配置: IP=%s, 任务ID=%s\n", ip, taskId)
+
+	// 获取摄像头配置
+	url := fmt.Sprintf("http://%s:8089/api/config/get", ip)
+	fmt.Printf("DEBUG: 请求URL: %s\n", url)
+
+	// 创建请求体
+	requestData := map[string]string{
+		"taskId": taskId,
+	}
+	requestBody, err := json.Marshal(requestData)
+	if err != nil {
+		fmt.Printf("ERROR: 创建请求失败: %v\n", err)
+		return nil, fmt.Errorf("创建请求失败: %w", err)
+	}
+	fmt.Printf("DEBUG: 请求体: %s\n", string(requestBody))
+
+	// 创建请求
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(requestBody))
+	if err != nil {
+		fmt.Printf("ERROR: 创建HTTP请求失败: %v\n", err)
+		return nil, fmt.Errorf("创建HTTP请求失败: %w", err)
+	}
+
+	// 设置header
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Token", token)
+	fmt.Printf("DEBUG: 请求头: Content-Type=%s, Token=%s\n", req.Header.Get("Content-Type"), req.Header.Get("Token"))
+
+	// 发送请求
+	resp, err := a.client.Do(req)
+	if err != nil {
+		fmt.Printf("ERROR: 发送请求失败: %v\n", err)
+		return nil, fmt.Errorf("发送请求失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	fmt.Printf("DEBUG: 响应状态码: %d\n", resp.StatusCode)
+
+	// 读取完整响应体以便记录日志
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Printf("ERROR: 读取响应体失败: %v\n", err)
+		return nil, fmt.Errorf("读取响应体失败: %w", err)
+	}
+
+	fmt.Printf("DEBUG: 响应体: %s\n", string(respBody))
+
+	// 将读取的响应体转回io.Reader用于解析
+	resp.Body = io.NopCloser(bytes.NewBuffer(respBody))
+
+	// 解析响应
+	var response CameraConfigResponse
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		fmt.Printf("ERROR: 解析响应失败: %v\n", err)
+		return nil, fmt.Errorf("解析响应失败: %w", err)
+	}
+
+	if response.Code != 0 {
+		fmt.Printf("ERROR: 获取摄像头配置失败: 代码=%d, 消息=%s\n", response.Code, response.Msg)
+		return nil, fmt.Errorf("获取摄像头配置失败: %s", response.Msg)
+	}
+
+	fmt.Printf("DEBUG: 成功获取摄像头配置\n")
+	return &response.Result, nil
+}
+
+// SetCameraIndexWithToken sets the index of a camera using an existing token
+func (a *App) SetCameraIndexWithToken(ip, token, taskId string, index int) (bool, string) {
+	fmt.Printf("DEBUG: 开始设置摄像头索引: IP=%s, 任务ID=%s, 索引=%d\n", ip, taskId, index)
+
+	// 1. 获取摄像头配置
+	config, err := a.GetCameraConfigWithToken(ip, token, taskId)
+	if err != nil {
+		fmt.Printf("ERROR: 获取摄像头配置失败: %v\n", err)
+		return false, fmt.Sprintf("获取摄像头配置失败: %v", err)
+	}
+	fmt.Printf("DEBUG: 成功获取摄像头配置\n")
+
+	// 2. 修改摄像头索引
+	var modified bool
+	for i := range config.Algorithms {
+		// 修改ExtraConfig中的camera_index
+		if config.Algorithms[i].ExtraConfig.CameraIndex != fmt.Sprintf("%d", index) {
+			fmt.Printf("DEBUG: 更新算法 %d 的摄像头索引: %s -> %d\n", i, config.Algorithms[i].ExtraConfig.CameraIndex, index)
+			config.Algorithms[i].ExtraConfig.CameraIndex = fmt.Sprintf("%d", index)
+			modified = true
+		}
+	}
+
+	if !modified {
+		fmt.Printf("DEBUG: 摄像头索引已经是正确的值 %d，无需修改\n", index)
+		return true, "摄像头索引已经是正确的值，无需修改"
+	}
+
+	url := fmt.Sprintf("http://%s:8089/api/config/mod", ip)
+	fmt.Printf("DEBUG: 请求URL: %s\n", url)
+
+	// 按照FEATURE.md中的示例格式构造请求载荷
+	requestData := map[string]interface{}{
+		"TaskID":    taskId,
+		"Algorithm": config.Algorithms[0], // 使用第一个算法（通常只有一个）
+	}
+
+	requestBody, err := json.Marshal(requestData)
+	if err != nil {
+		fmt.Printf("ERROR: 创建请求失败: %v\n", err)
+		return false, fmt.Sprintf("创建请求失败: %v", err)
+	}
+
+	// 打印请求体，但限制长度以避免日志过大
+	requestBodyStr := string(requestBody)
+	if len(requestBodyStr) > 1000 {
+		fmt.Printf("DEBUG: 请求体(部分): %s...(已截断，总长度 %d 字节)\n", requestBodyStr[:1000], len(requestBodyStr))
+	} else {
+		fmt.Printf("DEBUG: 请求体: %s\n", requestBodyStr)
+	}
+
+	// 创建请求
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(requestBody))
+	if err != nil {
+		fmt.Printf("ERROR: 创建HTTP请求失败: %v\n", err)
+		return false, fmt.Sprintf("创建HTTP请求失败: %v", err)
+	}
+
+	// 设置header
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Token", token)
+	fmt.Printf("DEBUG: 请求头: Content-Type=%s, Token=%s\n", req.Header.Get("Content-Type"), req.Header.Get("Token"))
+
+	// 发送请求
+	resp, err := a.client.Do(req)
+	if err != nil {
+		fmt.Printf("ERROR: 发送请求失败: %v\n", err)
+		return false, fmt.Sprintf("发送请求失败: %v", err)
+	}
+	defer resp.Body.Close()
+
+	fmt.Printf("DEBUG: 响应状态码: %d\n", resp.StatusCode)
+
+	// 读取完整响应体以便记录日志
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Printf("ERROR: 读取响应体失败: %v\n", err)
+		return false, fmt.Sprintf("读取响应体失败: %v", err)
+	}
+
+	fmt.Printf("DEBUG: 响应体: %s\n", string(respBody))
+
+	// 将读取的响应体转回io.Reader用于解析
+	resp.Body = io.NopCloser(bytes.NewBuffer(respBody))
+
+	// 读取响应
+	var response struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		fmt.Printf("ERROR: 解析响应失败: %v\n", err)
+		return false, fmt.Sprintf("解析响应失败: %v", err)
+	}
+
+	if response.Code != 0 {
+		fmt.Printf("ERROR: 设置摄像头索引失败: 代码=%d, 消息=%s\n", response.Code, response.Msg)
+		return false, fmt.Sprintf("设置摄像头索引失败: %s", response.Msg)
+	}
+
+	fmt.Printf("DEBUG: 成功将摄像头索引设置为 %d\n", index)
+	return true, fmt.Sprintf("成功将摄像头索引设置为 %d", index)
+}
+
 // ConfigureCamerasFromData configures cameras based on the provided data
 func (a *App) ConfigureCamerasFromData(deviceConfigs []ExcelRow, username, password, urlTemplate string, algorithmType int) []CameraConfigResult {
-	results := make([]CameraConfigResult, 0, len(deviceConfigs))
+	// 创建一个带缓冲的结果通道，用于收集所有设备的结果
+	resultChan := make(chan []CameraConfigResult, len(deviceConfigs))
 
 	// 按设备IP分组
 	deviceGroups := make(map[string][]ExcelRow)
@@ -1300,38 +2030,127 @@ func (a *App) ConfigureCamerasFromData(deviceConfigs []ExcelRow, username, passw
 		}
 	}
 
-	// 为每个设备配置摄像头
-	for deviceIP, configs := range deviceGroups {
-		for _, config := range configs {
-			// 从摄像头信息中提取IP
-			parts := strings.Split(config.CameraInfo, "/")
-			if len(parts) >= 1 {
-				cameraIP := parts[0]
+	// 控制最大并发数量
+	maxConcurrent := 8 // 最多同时处理8个设备
+	if len(deviceGroups) < maxConcurrent {
+		maxConcurrent = len(deviceGroups)
+	}
 
-				// 使用模板替换IP
-				cameraURL := strings.Replace(urlTemplate, "<ip>", cameraIP, -1)
+	// 使用通道控制并发数量
+	deviceIPChan := make(chan string, len(deviceGroups))
+	for deviceIP := range deviceGroups {
+		deviceIPChan <- deviceIP
+	}
+	close(deviceIPChan)
 
-				// 配置摄像头
-				success, message := a.ConfigureCamera(deviceIP, username, password, config.CameraName, cameraURL, algorithmType)
+	// 使用WaitGroup等待所有goroutine完成
+	var wg sync.WaitGroup
 
-				// 记录结果
-				results = append(results, CameraConfigResult{
-					DeviceIP:   deviceIP,
-					CameraName: config.CameraName,
-					Success:    success,
-					Message:    message,
-				})
-			} else {
-				// 摄像头信息格式错误
-				results = append(results, CameraConfigResult{
-					DeviceIP:   deviceIP,
-					CameraName: config.CameraName,
-					Success:    false,
-					Message:    "摄像头信息格式错误",
-				})
+	// 启动工作协程池
+	fmt.Printf("DEBUG: 启动 %d 个工作协程处理设备配置\n", maxConcurrent)
+	for i := 0; i < maxConcurrent; i++ {
+		wg.Add(1)
+		go func(workerId int) {
+			defer wg.Done()
+
+			for deviceIP := range deviceIPChan {
+				configs := deviceGroups[deviceIP]
+				deviceResults := a.configureCamerasForDevice(deviceIP, configs, username, password, urlTemplate, algorithmType, workerId)
+				resultChan <- deviceResults
 			}
+		}(i)
+	}
+
+	// 等待所有goroutine完成，然后关闭结果通道
+	go func() {
+		wg.Wait()
+		close(resultChan)
+		fmt.Printf("DEBUG: 所有设备处理完成\n")
+	}()
+
+	// 收集结果
+	var results []CameraConfigResult
+	for deviceResults := range resultChan {
+		results = append(results, deviceResults...)
+	}
+
+	return results
+}
+
+// configureCamerasForDevice 处理单个设备的所有摄像头配置
+func (a *App) configureCamerasForDevice(deviceIP string, configs []ExcelRow, username, password, urlTemplate string, algorithmType int, workerId int) []CameraConfigResult {
+	results := make([]CameraConfigResult, 0, len(configs))
+
+	// 为每个设备只获取一次token
+	fmt.Printf("DEBUG: [Worker-%d] 开始为设备 %s 配置摄像头，共 %d 个\n", workerId, deviceIP, len(configs))
+	token, err := a.LoginToDevice(deviceIP, username, password)
+	if err != nil {
+		fmt.Printf("ERROR: [Worker-%d] 登录设备 %s 失败: %v\n", workerId, deviceIP, err)
+		// 如果登录失败，将此设备下的所有摄像头标记为失败
+		for _, config := range configs {
+			results = append(results, CameraConfigResult{
+				DeviceIP:   deviceIP,
+				CameraName: config.CameraName,
+				Success:    false,
+				Message:    fmt.Sprintf("登录设备失败: %v", err),
+			})
+		}
+		return results
+	}
+	fmt.Printf("DEBUG: [Worker-%d] 成功登录设备 %s，获取到Token\n", workerId, deviceIP)
+
+	for _, config := range configs {
+		// 使用传入的设备内索引，如果没有则使用默认值1
+		cameraIndex := config.DeviceIndex
+		if cameraIndex <= 0 {
+			cameraIndex = 1
+		}
+
+		// 从摄像头信息中提取IP
+		parts := strings.Split(config.CameraInfo, "/")
+		if len(parts) >= 1 {
+			cameraIP := parts[0]
+
+			// 使用模板替换IP
+			cameraURL := strings.Replace(urlTemplate, "<ip>", cameraIP, -1)
+
+			// 配置摄像头，使用已获取的token
+			fmt.Printf("DEBUG: [Worker-%d] 配置摄像头: %s 在设备 %s\n", workerId, config.CameraName, deviceIP)
+			success, message := a.ConfigureCameraWithToken(deviceIP, token, config.CameraName, cameraURL, algorithmType)
+
+			// 如果配置成功，设置摄像头索引
+			if success {
+				fmt.Printf("DEBUG: [Worker-%d] 摄像头配置成功，等待500毫秒后设置索引...\n", workerId)
+				// 等待500毫秒，确保摄像头任务已初始化
+				time.Sleep(500 * time.Millisecond)
+
+				fmt.Printf("DEBUG: [Worker-%d] 设置摄像头索引: %s -> %d\n", workerId, config.CameraName, cameraIndex)
+				indexSuccess, indexMessage := a.SetCameraIndexWithToken(deviceIP, token, config.CameraName, cameraIndex)
+				if !indexSuccess {
+					message += ". " + indexMessage
+				} else {
+					message += ". " + indexMessage
+				}
+			}
+
+			// 记录结果
+			results = append(results, CameraConfigResult{
+				DeviceIP:   deviceIP,
+				CameraName: config.CameraName,
+				Success:    success,
+				Message:    message,
+			})
+		} else {
+			// 摄像头信息格式错误
+			results = append(results, CameraConfigResult{
+				DeviceIP:   deviceIP,
+				CameraName: config.CameraName,
+				Success:    false,
+				Message:    "摄像头信息格式错误",
+			})
 		}
 	}
 
+	fmt.Printf("DEBUG: [Worker-%d] 设备 %s 的所有摄像头配置完成\n", workerId, deviceIP)
 	return results
 }

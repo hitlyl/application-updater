@@ -34,6 +34,20 @@
 
       <div v-if="selectedSheetIndex !== null" class="sheet-content">
         <h4>{{ sheets[selectedSheetIndex].name }} 内容</h4>
+        <div class="info-box">
+          <p>
+            <i class="info-icon">ℹ️</i>
+            每个设备下的摄像头将从1开始自动编号，并设置到摄像头配置中的
+            camera_index 字段。
+          </p>
+          <p>
+            <i class="info-icon">📊</i> 当前共有
+            {{ Object.keys(groupedByDevice).length }} 个设备，{{
+              processedRows.length
+            }}
+            个摄像头。
+          </p>
+        </div>
         <div class="selection-actions">
           <button
             @click="toggleSelectAll"
@@ -67,29 +81,50 @@
                 <th v-for="(header, index) in headers" :key="index">
                   {{ header }}
                 </th>
+                <th class="number-column">设备内索引</th>
               </tr>
             </thead>
             <tbody>
-              <tr v-for="(row, index) in processedRows" :key="index">
-                <td class="checkbox-column">
-                  <input
-                    type="checkbox"
-                    v-model="row.selected"
-                    @change="updateSelectionState"
-                  />
-                </td>
-                <td class="number-column">{{ index + 1 }}</td>
-                <td
-                  v-for="(value, colIndex) in [
-                    row.deviceIp,
-                    row.cameraName,
-                    row.cameraInfo,
-                  ]"
-                  :key="colIndex"
+              <template v-for="(row, index) in processedRows" :key="index">
+                <!-- 如果是设备的第一个摄像头，显示设备分组标头 -->
+                <tr
+                  v-if="isFirstCameraInDevice(row.deviceIp, index)"
+                  class="device-group-header"
                 >
-                  {{ value }}
-                </td>
-              </tr>
+                  <td colspan="5">
+                    设备: {{ row.deviceIp }}
+                    <span class="device-camera-count"
+                      >(共
+                      {{ groupedByDevice[row.deviceIp].count }} 个摄像头)</span
+                    >
+                  </td>
+                </tr>
+                <tr>
+                  <td class="checkbox-column">
+                    <input
+                      type="checkbox"
+                      v-model="row.selected"
+                      @change="updateSelectionState"
+                    />
+                  </td>
+                  <td class="number-column">
+                    {{ getCameraIndex(row.deviceIp, index) }}
+                  </td>
+                  <td
+                    v-for="(value, colIndex) in [
+                      row.deviceIp,
+                      row.cameraName,
+                      row.cameraInfo,
+                    ]"
+                    :key="colIndex"
+                  >
+                    {{ value }}
+                  </td>
+                  <td class="number-column">
+                    {{ row.deviceIndex || getCameraIndex(row.deviceIp, index) }}
+                  </td>
+                </tr>
+              </template>
             </tbody>
           </table>
         </div>
@@ -170,6 +205,7 @@
               <th class="number-column">序号</th>
               <th>设备IP</th>
               <th>摄像头名称</th>
+              <th>设备内索引</th>
               <th>状态</th>
               <th>消息</th>
             </tr>
@@ -183,6 +219,11 @@
               <td class="number-column">{{ index + 1 }}</td>
               <td>{{ result.deviceIp }}</td>
               <td>{{ result.cameraName }}</td>
+              <td>
+                {{
+                  getCameraIndexFromResult(result.deviceIp, result.cameraName)
+                }}
+              </td>
               <td>{{ result.success ? "成功" : "失败" }}</td>
               <td>{{ result.message }}</td>
             </tr>
@@ -211,6 +252,7 @@ interface ExcelRow {
   cameraName: string;
   cameraInfo: string;
   selected: boolean;
+  deviceIndex?: number; // 设备内索引，从1开始
 }
 
 interface ConfigResult {
@@ -268,8 +310,52 @@ const updateSelectionState = () => {
 // 处理Excel数据，合并单元格并过滤无效数据
 const processedRows = ref<ExcelRow[]>([]);
 
+// 根据设备IP分组摄像头并计算索引的计算属性
+const groupedByDevice = computed(() => {
+  const groups: Record<string, { rows: ExcelRow[]; count: number }> = {};
+
+  processedRows.value.forEach((row) => {
+    if (!groups[row.deviceIp]) {
+      groups[row.deviceIp] = { rows: [], count: 0 };
+    }
+    groups[row.deviceIp].rows.push(row);
+    groups[row.deviceIp].count++;
+  });
+
+  return groups;
+});
+
+// 获取指定行在其设备组中的索引（从1开始）
+const getCameraIndex = (deviceIp: string, rowIndex: number) => {
+  const row = processedRows.value[rowIndex];
+  if (row.deviceIndex) {
+    return row.deviceIndex;
+  }
+
+  let count = 0;
+  for (let i = 0; i < processedRows.value.length; i++) {
+    if (processedRows.value[i].deviceIp === deviceIp) {
+      count++;
+      if (i === rowIndex) {
+        // 缓存索引
+        processedRows.value[i].deviceIndex = count;
+        return count;
+      }
+    }
+  }
+  return 0;
+};
+
 // 定义表头
 const headers = ref(["设备IP", "摄像头名称", "摄像头IP/掩码/网关"]);
+
+// 检查IP格式是否有效
+const isValidIP = (ip: string): boolean => {
+  // 检查IP地址格式 (IPv4)
+  const ipPattern =
+    /^(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
+  return ipPattern.test(ip);
+};
 
 // 处理文件上传
 const handleFileUpload = (event: Event) => {
@@ -330,7 +416,7 @@ const processSheetData = () => {
   }
 
   const data = rawSheetData.value[selectedSheetIndex.value];
-  const result: ExcelRow[] = [];
+  const rawRows: ExcelRow[] = [];
   let lastDeviceIp = "";
 
   // 从倒数第三列开始处理数据
@@ -351,19 +437,53 @@ const processSheetData = () => {
     // 过滤掉"/"数据
     if (cameraInfo === "/") continue;
     if (deviceIp === "") continue;
+
+    // 提取IP地址（如果包含掩码等）
     if (deviceIp.includes("/")) {
       deviceIp = deviceIp.split("/")[0];
     }
+
+    // 从摄像头信息中提取摄像头IP
+    let cameraIP = cameraInfo;
     if (cameraInfo.includes("/")) {
-      cameraInfo = cameraInfo.split("/")[0];
+      cameraIP = cameraInfo.split("/")[0];
     }
 
-    result.push({
+    // 验证设备IP和摄像头IP是否符合IP格式
+    if (!isValidIP(deviceIp) || !isValidIP(cameraIP)) {
+      console.log(`跳过无效IP: 设备IP=${deviceIp}, 摄像头IP=${cameraIP}`);
+      continue;
+    }
+
+    rawRows.push({
       deviceIp,
       cameraName,
       cameraInfo,
       selected: true,
     });
+  }
+
+  // 对处理后的数据按设备IP分组并为每组内的摄像头分配索引
+  const deviceGroups: Record<string, ExcelRow[]> = {};
+
+  // 先分组
+  for (const row of rawRows) {
+    if (!deviceGroups[row.deviceIp]) {
+      deviceGroups[row.deviceIp] = [];
+    }
+    deviceGroups[row.deviceIp].push(row);
+  }
+
+  // 生成最终的处理结果，添加索引
+  const result: ExcelRow[] = [];
+
+  // 将分组后的数据展平为数组，并为每个设备内的摄像头分配索引
+  for (const deviceIp in deviceGroups) {
+    const deviceRows = deviceGroups[deviceIp];
+    for (let i = 0; i < deviceRows.length; i++) {
+      deviceRows[i].deviceIndex = i + 1; // 从1开始的索引
+    }
+    result.push(...deviceRows);
   }
 
   processedRows.value = result;
@@ -397,6 +517,25 @@ const startConfiguration = async () => {
     return;
   }
 
+  // 按设备重新计算索引（考虑用户可能只选择了部分摄像头）
+  const tempGroups: Record<string, ExcelRow[]> = {};
+  selectedRows.forEach((row) => {
+    if (!tempGroups[row.deviceIp]) {
+      tempGroups[row.deviceIp] = [];
+    }
+    tempGroups[row.deviceIp].push({ ...row });
+  });
+
+  // 重新分配索引
+  const processedSelectedRows: ExcelRow[] = [];
+  for (const deviceIp in tempGroups) {
+    const deviceRows = tempGroups[deviceIp];
+    for (let i = 0; i < deviceRows.length; i++) {
+      deviceRows[i].deviceIndex = i + 1;
+      processedSelectedRows.push(deviceRows[i]);
+    }
+  }
+
   isConfiguring.value = true;
   errorMessage.value = "";
   configResults.value = [];
@@ -405,7 +544,7 @@ const startConfiguration = async () => {
     // 调用Go后端方法配置摄像头
     if (App && App.ConfigureCamerasFromData) {
       const results = await App.ConfigureCamerasFromData(
-        selectedRows,
+        processedSelectedRows,
         username.value,
         password.value,
         urlTemplate.value,
@@ -422,6 +561,44 @@ const startConfiguration = async () => {
   } finally {
     isConfiguring.value = false;
   }
+};
+
+// 获取结果中设备的索引
+const getCameraIndexFromResult = (deviceIp: string, cameraName: string) => {
+  // 首先在处理过的数据中查找匹配的行
+  for (const row of processedRows.value) {
+    if (
+      row.deviceIp === deviceIp &&
+      row.cameraName === cameraName &&
+      row.selected
+    ) {
+      // 如果找到匹配的行并且有deviceIndex属性，直接返回
+      if (row.deviceIndex) {
+        return row.deviceIndex;
+      }
+      break;
+    }
+  }
+
+  // 如果上述方法没找到，退回到原来的计数方法
+  let deviceIndex = 0;
+  for (const row of processedRows.value) {
+    if (row.deviceIp === deviceIp && row.selected) {
+      deviceIndex++;
+      if (row.cameraName === cameraName) {
+        return deviceIndex;
+      }
+    }
+  }
+  return "-";
+};
+
+// 检查是否是设备的第一个摄像头
+const isFirstCameraInDevice = (deviceIp: string, rowIndex: number) => {
+  if (rowIndex === 0) return true;
+
+  const prevRow = processedRows.value[rowIndex - 1];
+  return prevRow.deviceIp !== deviceIp;
 };
 </script>
 
@@ -656,5 +833,35 @@ small {
 .config-title {
   margin: 0;
   font-size: 18px;
+}
+
+.info-box {
+  background-color: rgba(66, 153, 225, 0.1);
+  border-left: 4px solid var(--primary-color);
+  padding: 12px 15px;
+  margin-bottom: 15px;
+  border-radius: 4px;
+}
+
+.info-icon {
+  margin-right: 8px;
+}
+
+.device-group-header {
+  background-color: #f0f4f8;
+}
+
+.device-group-header td {
+  font-weight: 600;
+  padding: 8px 10px;
+  color: var(--primary-color);
+  border-top: 2px solid var(--primary-color);
+}
+
+.device-camera-count {
+  font-weight: normal;
+  font-size: 13px;
+  color: #666;
+  margin-left: 8px;
 }
 </style>

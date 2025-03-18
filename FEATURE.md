@@ -39,6 +39,7 @@ Content-Type: application/octet-stream
 #批量配置摄像头
 ## 上传excel文件
 ### excel文件有多个sheet，每个sheet 使用tab方式显示，每个tab按表格显示该sheet内容。该sheet的格式为 使用后三列，倒数第三列为设备ip（此列用到了合并单元格，需要处理，即如果为空，则为上一列的数据）,倒数第二列为摄像头名称，倒数第一列为摄像头的ip/掩码/网关。 过滤掉数据为 "/" 字符串的内容
+###每个设备下的每个摄像头自动增加个index，从1开始。并且每个设备单独统计。
 
 ### 选择一个tab后，下方需要配置 设备的用户名，密码，摄像头url模版（例如 rtsp://admin:123@<ip>/av/stream)
 算法选择单选框 (6:精准喷淋,7:牛行为统计)
@@ -88,3 +89,110 @@ POST
 http://192.168.3.123:8089/api/task/modify
 载荷:
 {"taskId":"摄像头名称","deviceName":"摄像头名称","url":"摄像头url","types":[算法id]}
+
+## 自动设置摄像头index
+### 先通过接口 POST http://192.168.3.123:8089/api/config/get 
+载荷为 {"taskId":"5号牛舍-南1"}
+获取这个摄像头的任务信息
+例如 
+{
+    "code": 0,
+    "msg": "ok",
+    "result": {
+        "device": {
+            "codeName": "h264",
+            "name": "5号牛舍-南1",
+            "resolution": "1280*736",
+            "url": "rtsp://192.168.3.164:30554/record/cam_video/cow5.mp4",
+            "width": 1280,
+            "height": 736
+        },
+        "algorithms": [
+            {
+                "Type": 7,
+                "TrackInterval": 3,
+                "DetectInterval": 3,
+                "AlarmInterval": 1,
+                "threshold": 50,
+                "TargetSize": {
+                    "MinDetect": 30,
+                    "MaxDetect": 250
+                },
+                "DetectInfos": [
+                    {
+                        "Id": 1,
+                        "HotArea": [
+                            {
+                                "X": 0,
+                                "Y": 0
+                            },
+                            {
+                                "X": 1280,
+                                "Y": 0
+                            },
+                            {
+                                "X": 1280,
+                                "Y": 736
+                            },
+                            {
+                                "X": 0,
+                                "Y": 736
+                            }
+                        ]
+                    }
+                ],
+                "TripWire": {
+                    "LineStart": {
+                        "X": 0,
+                        "Y": 0
+                    },
+                    "LineEnd": {
+                        "X": 0,
+                        "Y": 0
+                    },
+                    "DirectStart": {
+                        "X": 0,
+                        "Y": 0
+                    },
+                    "DirectEnd": {
+                        "X": 0,
+                        "Y": 0
+                    }
+                },
+                "ExtraConfig": {
+                    "camera_index": "2",
+                    "defs": [
+                        {
+                            "Name": "interval",
+                            "Desc": "抑制时间",
+                            "Type": "string",
+                            "Unit": "*s/*m/*h",
+                            "Default": "1s"
+                        },
+                        {
+                            "Name": "save_picture",
+                            "Desc": "保存图片",
+                            "Type": "int",
+                            "Unit": "0/1",
+                            "Default": "0"
+                        },
+                        {
+                            "Name": "camera_index",
+                            "Desc": "摄像头索引",
+                            "Type": "int",
+                            "Unit": "",
+                            "Default": "1"
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+}
+
+其中result为完整的配置信息， 修改 ExtraConfig的 camera_index 为实际的摄像头index，然后调用
+POST   http://192.168.3.123:8089/api/config/mod
+载荷示例 
+{"TaskID":"1号牛舍-南1","Algorithm":{"Type":6,"TrackInterval":3,"DetectInterval":3,"AlarmInterval":1,"TargetSize":{"MinDetect":30,"MaxDetect":250},"threshold":50,"DetectInfos":[{"Id":1,"ExtraConfig":{},"HotArea":[{"X":0,"Y":0},{"X":1920,"Y":0},{"X":1920,"Y":1080},{"X":0,"Y":1080}]}],"DetectPoints":[],"TripWire":{"LineStart":{"X":0,"Y":0},"LineEnd":{"X":0,"Y":0},"DirectStart":{"X":0,"Y":0},"DirectEnd":{"X":0,"Y":0}},"ExtraConfig":{"defs":[{"Name":"interval","Desc":"抑制时间","Type":"string","Unit":"*s/*m/*h","Default":"2s"},{"Name":"save_picture","Desc":"保存图片","Type":"int","Unit":"0/1","Default":"0"},{"Name":"camera_index","Desc":"摄像头索引(从1开始)","Type":"int","Unit":"","Default":"1"},{"Name":"precision","Desc":"精度","Type":"string","Unit":"","Default":"fp32"}],"camera_index":"2"}}}
+
+进行修改。

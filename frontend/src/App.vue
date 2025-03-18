@@ -490,7 +490,9 @@ async function updateByBuildTime(buildTime: string) {
 
 <template>
   <div class="container">
-    <h1>设备更新管理</h1>
+    <div class="header">
+      <h1>设备更新管理 <span class="version">v1.1.1</span></h1>
+    </div>
 
     <div class="tabs">
       <button
@@ -907,7 +909,10 @@ h3 {
   margin-top: 0;
   font-size: 16px;
 }
-
+.version {
+  font-size: 16px;
+  color: #6c757d;
+}
 .card {
   background-color: var(--card-background);
   border-radius: 8px;

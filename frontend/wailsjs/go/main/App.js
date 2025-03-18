@@ -14,12 +14,28 @@ export function ConfigureCamera(arg1, arg2, arg3, arg4, arg5, arg6) {
   return window['go']['main']['App']['ConfigureCamera'](arg1, arg2, arg3, arg4, arg5, arg6);
 }
 
+export function ConfigureCameraWithToken(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['ConfigureCameraWithToken'](arg1, arg2, arg3, arg4, arg5);
+}
+
 export function ConfigureCamerasFromData(arg1, arg2, arg3, arg4, arg5) {
   return window['go']['main']['App']['ConfigureCamerasFromData'](arg1, arg2, arg3, arg4, arg5);
 }
 
+export function GetCameraConfig(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['GetCameraConfig'](arg1, arg2, arg3, arg4);
+}
+
+export function GetCameraConfigWithToken(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GetCameraConfigWithToken'](arg1, arg2, arg3);
+}
+
 export function GetCameraTasks(arg1, arg2, arg3) {
   return window['go']['main']['App']['GetCameraTasks'](arg1, arg2, arg3);
+}
+
+export function GetCameraTasksWithToken(arg1, arg2) {
+  return window['go']['main']['App']['GetCameraTasksWithToken'](arg1, arg2);
 }
 
 export function GetDevices() {
@@ -68,6 +84,14 @@ export function SaveExcelData(arg1) {
 
 export function ScanIPRange(arg1, arg2) {
   return window['go']['main']['App']['ScanIPRange'](arg1, arg2);
+}
+
+export function SetCameraIndex(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['SetCameraIndex'](arg1, arg2, arg3, arg4, arg5);
+}
+
+export function SetCameraIndexWithToken(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['SetCameraIndexWithToken'](arg1, arg2, arg3, arg4);
 }
 
 export function SetUploadFile(arg1) {
