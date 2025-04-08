@@ -424,10 +424,13 @@ const processSheetData = () => {
     // 跳过标题行或无效行
     if (!row || row.length < 3) continue;
 
-    // 提取后三列
-    let cameraInfo = row[row.length - 1];
-    const cameraName = row[row.length - 2];
-    let deviceIp = row[row.length - 3] || lastDeviceIp; // 如果为空，使用上一行的值
+    let deviceIndex = 0;
+    if (row[9]) {
+      deviceIndex = parseInt(row[9]);
+    }
+    let cameraInfo = row[8];
+    const cameraName = row[7];
+    let deviceIp = row[6] || lastDeviceIp; // 如果为空，使用上一行的值
 
     // 更新最后使用的设备IP
     if (deviceIp) {
@@ -459,6 +462,7 @@ const processSheetData = () => {
       deviceIp,
       cameraName,
       cameraInfo,
+      deviceIndex,
       selected: true,
     });
   }
@@ -481,7 +485,11 @@ const processSheetData = () => {
   for (const deviceIp in deviceGroups) {
     const deviceRows = deviceGroups[deviceIp];
     for (let i = 0; i < deviceRows.length; i++) {
-      deviceRows[i].deviceIndex = i + 1; // 从1开始的索引
+      if (deviceRows[i].deviceIndex!==0) {
+        deviceRows[i].deviceIndex = deviceRows[i].deviceIndex;
+      } else {
+        deviceRows[i].deviceIndex = i + 1; // 从1开始的索引
+      }
     }
     result.push(...deviceRows);
   }
@@ -517,24 +525,6 @@ const startConfiguration = async () => {
     return;
   }
 
-  // 按设备重新计算索引（考虑用户可能只选择了部分摄像头）
-  const tempGroups: Record<string, ExcelRow[]> = {};
-  selectedRows.forEach((row) => {
-    if (!tempGroups[row.deviceIp]) {
-      tempGroups[row.deviceIp] = [];
-    }
-    tempGroups[row.deviceIp].push({ ...row });
-  });
-
-  // 重新分配索引
-  const processedSelectedRows: ExcelRow[] = [];
-  for (const deviceIp in tempGroups) {
-    const deviceRows = tempGroups[deviceIp];
-    for (let i = 0; i < deviceRows.length; i++) {
-      deviceRows[i].deviceIndex = i + 1;
-      processedSelectedRows.push(deviceRows[i]);
-    }
-  }
 
   isConfiguring.value = true;
   errorMessage.value = "";
@@ -544,7 +534,7 @@ const startConfiguration = async () => {
     // 调用Go后端方法配置摄像头
     if (App && App.ConfigureCamerasFromData) {
       const results = await App.ConfigureCamerasFromData(
-        processedSelectedRows,
+        selectedRows,
         username.value,
         password.value,
         urlTemplate.value,
