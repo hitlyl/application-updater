@@ -1,6 +1,7 @@
 <script lang="ts" setup>
 import { ref, onMounted, computed } from "vue";
 import CameraConfig from "./components/CameraConfig.vue";
+import TimeSync from "./components/TimeSync.vue";
 
 // 避免TypeScript错误的类型声明
 declare global {
@@ -491,7 +492,7 @@ async function updateByBuildTime(buildTime: string) {
 <template>
   <div class="container">
     <div class="header">
-      <h1>设备更新管理 <span class="version">v1.1.3</span></h1>
+      <h1>设备更新管理 <span class="version">v1.1.4</span></h1>
     </div>
 
     <div class="tabs">
@@ -512,6 +513,12 @@ async function updateByBuildTime(buildTime: string) {
         @click="activeTab = 'camera'"
       >
         摄像头配置
+      </button>
+      <button
+        :class="{ active: activeTab === 'time' }"
+        @click="activeTab = 'time'"
+      >
+        时间同步
       </button>
     </div>
 
@@ -861,6 +868,11 @@ async function updateByBuildTime(buildTime: string) {
     <!-- Camera Configuration Tab -->
     <div v-if="activeTab === 'camera'" class="tab-content">
       <CameraConfig />
+    </div>
+
+    <!-- Time Sync Tab -->
+    <div v-if="activeTab === 'time'" class="tab-content">
+      <TimeSync />
     </div>
   </div>
 </template>

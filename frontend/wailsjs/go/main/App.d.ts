@@ -50,6 +50,8 @@ export function SetCameraIndexWithToken(arg1:string,arg2:string,arg3:string,arg4
 
 export function SetUploadFile(arg1:string):Promise<string>;
 
+export function SyncDeviceTime(arg1:string,arg2:string,arg3:Array<string>):Promise<Array<main.TimeSyncResult>>;
+
 export function TestDevice(arg1:string):Promise<main.Device>;
 
 export function UpdateDevices(arg1:string,arg2:string,arg3:string):Promise<Array<main.UpdateResult>>;

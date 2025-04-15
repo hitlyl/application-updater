@@ -98,6 +98,10 @@ export function SetUploadFile(arg1) {
   return window['go']['main']['App']['SetUploadFile'](arg1);
 }
 
+export function SyncDeviceTime(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SyncDeviceTime'](arg1, arg2, arg3);
+}
+
 export function TestDevice(arg1) {
   return window['go']['main']['App']['TestDevice'](arg1);
 }
