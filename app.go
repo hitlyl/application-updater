@@ -906,19 +906,11 @@ func (a *App) SetUploadFile(filename string) string {
 	UploadFilePath = expectedPath
 	fmt.Printf("设置上传文件路径: %s\n", expectedPath)
 
-	// 检查预期路径是否已经存在有效文件
+	// 检查预期路径是否已经存在文件 - 如果存在，我们会在找到新文件后覆盖它
 	if _, err := os.Stat(expectedPath); err == nil {
-		// 文件已存在于预期位置
-		fileInfo, err := os.Stat(expectedPath)
-		if err == nil && fileInfo.Size() > 0 {
-			fmt.Printf("文件已存在并有效: %s (大小: %d 字节)\n", expectedPath, fileInfo.Size())
-			return expectedPath
-		} else {
-			fmt.Printf("文件存在但可能无效: %s\n", expectedPath)
-			// 继续寻找有效文件
-		}
+		fmt.Printf("文件已存在于目标位置，将被覆盖: %s\n", expectedPath)
 	}
-
+	
 	// 尝试在多个位置寻找文件
 	possibleLocations := []string{
 		filename,                         // 相对路径
@@ -1010,17 +1002,9 @@ func (a *App) SetMd5File(filename string) string {
 	Md5FilePath = expectedPath
 	fmt.Printf("设置MD5文件路径: %s\n", expectedPath)
 
-	// 检查预期路径是否已经存在有效文件
+	// 检查预期路径是否已经存在文件 - 如果存在，我们会在找到新文件后覆盖它
 	if _, err := os.Stat(expectedPath); err == nil {
-		// 文件已存在于预期位置
-		fileInfo, err := os.Stat(expectedPath)
-		if err == nil && fileInfo.Size() > 0 {
-			fmt.Printf("MD5文件已存在并有效: %s (大小: %d 字节)\n", expectedPath, fileInfo.Size())
-			return expectedPath
-		} else {
-			fmt.Printf("MD5文件存在但可能无效: %s\n", expectedPath)
-			// 继续寻找有效文件
-		}
+		fmt.Printf("MD5文件已存在于目标位置，将被覆盖: %s\n", expectedPath)
 	}
 
 	// 尝试在多个位置寻找文件

@@ -4,6 +4,7 @@ import {
   GetDevices,
   UpdateDevices,
   RefreshDevices,
+  GetMd5File,
 } from "../../wailsjs/go/main/App";
 import { main } from "../../wailsjs/go/models";
 
@@ -120,7 +121,8 @@ const updateSelectedDevices = async () => {
     const results = await UpdateDevices(
       username.value,
       password.value,
-      buildTime
+      buildTime,
+      await GetMd5File()
     );
     updateResults.value = results;
     await refreshDevices();
