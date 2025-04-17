@@ -860,6 +860,9 @@ func (a *App) LoginToDevice(ip, username, password string) (string, error) {
 // UploadFilePath stores the path to the file to be uploaded
 var UploadFilePath string
 
+// Md5FilePath stores the path to the MD5 file to be uploaded
+var Md5FilePath string
+
 // SetUploadFile sets the path of the file to upload
 // 只接收文件名，但会在程序执行目录中创建一个专用目录来存放上传文件
 func (a *App) SetUploadFile(filename string) string {
@@ -965,6 +968,120 @@ func (a *App) SetUploadFile(filename string) string {
 	return expectedPath
 }
 
+// SetMd5File sets the path of the MD5 file to upload
+func (a *App) SetMd5File(filename string) string {
+	// 获取程序执行文件路径
+	execPath, err := os.Executable()
+	if err != nil {
+		fmt.Printf("警告: 无法获取程序可执行文件路径: %v\n", err)
+		// 如果获取失败，回退到当前工作目录
+		execPath, err = os.Getwd()
+		if err != nil {
+			fmt.Printf("警告: 无法获取工作目录: %v\n", err)
+			execPath = "."
+		}
+	}
+
+	// 直接使用程序执行目录创建uploads目录
+	execDir := filepath.Dir(execPath)
+	uploadsDir := filepath.Join(execDir, "uploads")
+	fmt.Printf("检查上传文件目录: %s (程序执行目录: %s)\n", uploadsDir, execDir)
+
+	if err := os.MkdirAll(uploadsDir, 0755); err != nil {
+		fmt.Printf("无法在程序目录创建上传目录: %v\n", err)
+
+		// 尝试在当前目录创建uploads目录
+		currentDir, _ := os.Getwd()
+		if currentDir != execDir {
+			uploadsDir = filepath.Join(currentDir, "uploads")
+			fmt.Printf("尝试在当前目录创建上传目录: %s\n", uploadsDir)
+
+			if err := os.MkdirAll(uploadsDir, 0755); err != nil {
+				fmt.Printf("无法在当前目录创建上传目录: %v\n", err)
+				return ""
+			}
+		} else {
+			return ""
+		}
+	}
+
+	// 预期完整路径位置
+	expectedPath := filepath.Join(uploadsDir, filename)
+	Md5FilePath = expectedPath
+	fmt.Printf("设置MD5文件路径: %s\n", expectedPath)
+
+	// 检查预期路径是否已经存在有效文件
+	if _, err := os.Stat(expectedPath); err == nil {
+		// 文件已存在于预期位置
+		fileInfo, err := os.Stat(expectedPath)
+		if err == nil && fileInfo.Size() > 0 {
+			fmt.Printf("MD5文件已存在并有效: %s (大小: %d 字节)\n", expectedPath, fileInfo.Size())
+			return expectedPath
+		} else {
+			fmt.Printf("MD5文件存在但可能无效: %s\n", expectedPath)
+			// 继续寻找有效文件
+		}
+	}
+
+	// 尝试在多个位置寻找文件
+	possibleLocations := []string{
+		filename,                         // 相对路径
+		filepath.Join(".", filename),     // 当前目录
+		filepath.Join(execDir, filename), // 可执行文件所在目录
+	}
+
+	// 添加绝对路径（如果提供的是绝对路径）
+	if filepath.IsAbs(filename) {
+		possibleLocations = append(possibleLocations, filename)
+	}
+
+	// 添加用户目录
+	if homeDir, err := os.UserHomeDir(); err == nil {
+		possibleLocations = append(possibleLocations, filepath.Join(homeDir, filename))
+		possibleLocations = append(possibleLocations, filepath.Join(homeDir, "Downloads", filename))
+	}
+
+	// 添加工作目录
+	if workDir, err := os.Getwd(); err == nil && workDir != execDir {
+		possibleLocations = append(possibleLocations, filepath.Join(workDir, filename))
+	}
+
+	fmt.Printf("在以下位置寻找MD5文件 '%s':\n", filename)
+	for _, loc := range possibleLocations {
+		fmt.Printf("- 检查: %s\n", loc)
+		if fileInfo, err := os.Stat(loc); err == nil && fileInfo.Size() > 0 {
+			// 发现文件，复制到应用目录
+			fmt.Printf("  找到MD5文件 (大小: %d 字节)\n", fileInfo.Size())
+			if err := copyFile(loc, expectedPath); err == nil {
+				fmt.Printf("已复制MD5文件: %s -> %s\n", loc, expectedPath)
+				return expectedPath
+			} else {
+				fmt.Printf("复制MD5文件失败: %v\n", err)
+			}
+		}
+	}
+
+	// 如果找不到文件，返回预期路径并记录警告
+	fmt.Printf("警告: 未能找到MD5文件: %s\n", filename)
+	fmt.Printf("预期路径: %s\n", expectedPath)
+	fmt.Printf("请将MD5文件 '%s' 复制到以下位置之一:\n", filename)
+	for _, loc := range possibleLocations {
+		fmt.Printf("- %s\n", loc)
+	}
+
+	return expectedPath
+}
+
+// GetUploadFile gets the path of the file to upload
+func (a *App) GetUploadFile() string {
+	return UploadFilePath
+}
+
+// GetMd5File gets the path of the MD5 file
+func (a *App) GetMd5File() string {
+	return Md5FilePath
+}
+
 // copyFile 将源文件复制到目标路径
 func copyFile(src, dst string) error {
 	sourceFile, err := os.Open(src)
@@ -987,13 +1104,8 @@ func copyFile(src, dst string) error {
 	return destFile.Sync()
 }
 
-// GetUploadFile gets the path of the file to upload
-func (a *App) GetUploadFile() string {
-	return UploadFilePath
-}
-
 // UpdateDevices updates all devices with the uploaded file
-func (a *App) UpdateDevices(username, password string, selectedBuildTime string) []UpdateResult {
+func (a *App) UpdateDevices(username, password string, selectedBuildTime string, md5FileName string) []UpdateResult {
 	if UploadFilePath == "" {
 		return []UpdateResult{{
 			IP:      "",
@@ -1073,7 +1185,7 @@ func (a *App) UpdateDevices(username, password string, selectedBuildTime string)
 				}
 
 				// 上传文件
-				success, message := a.uploadBinary(device.IP, token)
+				success, message := a.uploadBinaryWithMd5(device.IP, token, md5FileName)
 				resultChan <- UpdateResult{
 					IP:      device.IP,
 					Success: success,
@@ -1098,8 +1210,8 @@ func (a *App) UpdateDevices(username, password string, selectedBuildTime string)
 	return results
 }
 
-// uploadBinary uploads a binary file to a device
-func (a *App) uploadBinary(ip, token string) (bool, string) {
+// uploadBinaryWithMd5 uploads a binary file to a device with optional MD5 file
+func (a *App) uploadBinaryWithMd5(ip, token, md5FileName string) (bool, string) {
 	// 获取上传文件路径
 	filePath := a.GetUploadFile()
 	fmt.Printf("DEBUG: 开始上传文件: %s 到设备 %s\n", filePath, ip)
@@ -1112,6 +1224,20 @@ func (a *App) uploadBinary(ip, token string) (bool, string) {
 	}
 
 	fmt.Printf("DEBUG: 文件大小: %d 字节\n", fileInfo.Size())
+
+	// 检查是否提供了MD5文件
+	var md5FilePath string
+	if md5FileName != "" {
+		md5FilePath = a.GetMd5File()
+		fmt.Printf("DEBUG: 将包含MD5文件: %s\n", md5FilePath)
+		
+		// 检查MD5文件是否存在
+		if _, err := os.Stat(md5FilePath); err != nil {
+			fmt.Printf("WARNING: MD5文件不存在或无法访问: %s, 错误: %v\n", md5FilePath, err)
+			// 继续而不使用MD5文件
+			md5FilePath = ""
+		}
+	}
 
 	// 设置超时（基于文件大小，每MB至少10秒，最少30秒）
 	fileSize := fileInfo.Size()
@@ -1148,6 +1274,33 @@ func (a *App) uploadBinary(ip, token string) (bool, string) {
 		return false, fmt.Sprintf("Failed to copy file content: %v", err)
 	}
 	fmt.Printf("DEBUG: 已写入 %d 字节到表单\n", bytesWritten)
+
+	// 如果指定了MD5文件，也加入到请求中
+	if md5FilePath != "" {
+		md5File, err := os.Open(md5FilePath)
+		if err != nil {
+			fmt.Printf("ERROR: 无法打开MD5文件: %s, 错误: %v\n", md5FilePath, err)
+			// 继续而不使用MD5文件
+		} else {
+			defer md5File.Close()
+			
+			fmt.Printf("DEBUG: 创建multipart表单字段 'md5file'\n")
+			md5Part, err := writer.CreateFormFile("md5file", filepath.Base(md5FilePath))
+			if err != nil {
+				fmt.Printf("ERROR: 创建MD5表单文件字段失败: %v\n", err)
+				// 继续而不使用MD5文件
+			} else {
+				// 复制MD5文件内容到表单字段
+				md5BytesWritten, err := io.Copy(md5Part, md5File)
+				if err != nil {
+					fmt.Printf("ERROR: 复制MD5文件内容失败: %v\n", err)
+					// 继续而不使用MD5文件
+				} else {
+					fmt.Printf("DEBUG: 已写入 %d 字节MD5数据到表单\n", md5BytesWritten)
+				}
+			}
+		}
+	}
 
 	// 完成multipart表单
 	err = writer.Close()
@@ -1212,6 +1365,23 @@ func (a *App) uploadBinary(ip, token string) (bool, string) {
 	// 读取成功响应
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 	fmt.Printf("DEBUG: 上传成功. 响应体: %s\n", string(respBody))
+
+	// 解析JSON响应体，检查code字段
+	var responseObj struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+	}
+
+	if err := json.Unmarshal(respBody, &responseObj); err != nil {
+		fmt.Printf("ERROR: 无法解析响应JSON: %v\n", err)
+		return false, fmt.Sprintf("Failed to parse response: %v", err)
+	}
+
+	// 检查code字段
+	if responseObj.Code != 0 {
+		fmt.Printf("ERROR: 上传失败. 错误码: %d, 错误信息: %s\n", responseObj.Code, responseObj.Msg)
+		return false, fmt.Sprintf("Upload failed: %s", responseObj.Msg)
+	}
 
 	return true, "Update successful"
 }

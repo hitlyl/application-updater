@@ -22,6 +22,8 @@ export function GetCameraTasksWithToken(arg1:string,arg2:string):Promise<Array<m
 
 export function GetDevices():Promise<Array<main.Device>>;
 
+export function GetMd5File():Promise<string>;
+
 export function GetUploadFile():Promise<string>;
 
 export function Greet(arg1:string):Promise<string>;
@@ -48,10 +50,12 @@ export function SetCameraIndex(arg1:string,arg2:string,arg3:string,arg4:string,a
 
 export function SetCameraIndexWithToken(arg1:string,arg2:string,arg3:string,arg4:number):Promise<boolean|string>;
 
+export function SetMd5File(arg1:string):Promise<string>;
+
 export function SetUploadFile(arg1:string):Promise<string>;
 
 export function SyncDeviceTime(arg1:string,arg2:string,arg3:Array<string>):Promise<Array<main.TimeSyncResult>>;
 
 export function TestDevice(arg1:string):Promise<main.Device>;
 
-export function UpdateDevices(arg1:string,arg2:string,arg3:string):Promise<Array<main.UpdateResult>>;
+export function UpdateDevices(arg1:string,arg2:string,arg3:string,arg4:string):Promise<Array<main.UpdateResult>>;

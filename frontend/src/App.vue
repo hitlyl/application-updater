@@ -43,6 +43,7 @@ const scanLoading = ref(false);
 const updateResults = ref<UpdateResult[]>([]);
 const activeTab = ref("devices");
 const selectedFile = ref("");
+const selectedMd5File = ref("");
 const selectedDevices = ref<Record<string, boolean>>({});
 const selectAll = ref(true);
 // 组展开状态
@@ -432,6 +433,62 @@ async function handleFileSelect(event: Event) {
   }
 }
 
+// 新增：处理MD5文件选择
+async function handleMd5FileSelect(event: Event) {
+  if (!App) {
+    alert("无法连接到后端服务");
+    return;
+  }
+
+  const input = event.target as HTMLInputElement;
+  if (input.files && input.files[0]) {
+    // 获取文件信息
+    const file = input.files[0];
+    const filename = file.name;
+
+    try {
+      console.log("设置MD5文件:", filename);
+
+      // 告知用户我们正在寻找文件
+      const fileStatus = document.getElementById("md5-file-status");
+      if (fileStatus) {
+        fileStatus.textContent = "正在寻找文件...";
+        fileStatus.className = "file-status searching";
+      }
+
+      // 调用后端设置上传文件
+      const filePath = await App.SetMd5File(filename);
+
+      if (!filePath) {
+        throw new Error("设置MD5文件路径失败");
+      }
+
+      console.log("设置MD5文件路径:", filePath);
+      selectedMd5File.value = filename;
+
+      // 更新文件状态UI
+      if (fileStatus) {
+        fileStatus.textContent = "MD5文件已准备好";
+        fileStatus.className = "file-status ready";
+      }
+    } catch (error) {
+      console.error("设置MD5文件失败:", error);
+      alert(`设置MD5文件失败: ${error}`);
+      selectedMd5File.value = "";
+
+      // 更新文件状态UI
+      const fileStatus = document.getElementById("md5-file-status");
+      if (fileStatus) {
+        fileStatus.textContent = "文件未找到";
+        fileStatus.className = "file-status error";
+      }
+
+      // 重置文件输入框
+      input.value = "";
+    }
+  }
+}
+
 // Update selected devices
 async function updateSelectedDevices() {
   if (!App || !username.value || !password.value || !selectedFile.value) {
@@ -451,10 +508,12 @@ async function updateSelectedDevices() {
       selectedBuildTimes.value.length > 0 ? selectedBuildTimes.value[0] : "";
 
     // 更新请求中使用buildTime，而不是IP列表
+    // 增加MD5文件参数
     updateResults.value = await App.UpdateDevices(
       username.value,
       password.value,
-      selectedBuildTime
+      selectedBuildTime,
+      selectedMd5File.value
     );
   } catch (error: unknown) {
     console.error("更新设备出错:", error);
@@ -465,7 +524,7 @@ async function updateSelectedDevices() {
   }
 }
 
-// 新增按buildTime进行批量更新的函数
+// 修改按buildTime进行批量更新的函数
 async function updateByBuildTime(buildTime: string) {
   if (!App || !username.value || !password.value || !selectedFile.value) {
     alert("请填写所有字段并选择文件");
@@ -474,10 +533,12 @@ async function updateByBuildTime(buildTime: string) {
 
   isLoading.value = true;
   try {
+    // 增加MD5文件参数
     updateResults.value = await App.UpdateDevices(
       username.value,
       password.value,
-      buildTime
+      buildTime,
+      selectedMd5File.value
     );
   } catch (error: unknown) {
     console.error(`更新构建时间为 ${buildTime} 的设备出错:`, error);
@@ -492,7 +553,7 @@ async function updateByBuildTime(buildTime: string) {
 <template>
   <div class="container">
     <div class="header">
-      <h1>设备更新管理 <span class="version">v1.1.4</span></h1>
+      <h1>设备更新管理 <span class="version">v1.1.5</span></h1>
     </div>
 
     <div class="tabs">
@@ -661,6 +722,21 @@ async function updateByBuildTime(buildTime: string) {
             <p>
               如果您遇到"文件未找到"的错误，请确保文件位于上述位置之一，或重新选择文件。
             </p>
+          </div>
+        </div>
+
+        <!-- 新增：MD5文件上传选项 -->
+        <div class="form-group">
+          <label>MD5文件（可选）</label>
+          <input type="file" @change="handleMd5FileSelect" />
+          <div v-if="selectedMd5File" class="selected-file">
+            已选择: {{ selectedMd5File }}
+            <div id="md5-file-status" class="file-status"></div>
+          </div>
+          <div v-if="selectedMd5File" class="file-help">
+            <p><strong>MD5文件说明:</strong></p>
+            <p>上传的MD5文件将用于验证设备上传过程的完整性。</p>
+            <p>文件将以"md5file"的名称作为表单字段上传到设备。</p>
           </div>
         </div>
 

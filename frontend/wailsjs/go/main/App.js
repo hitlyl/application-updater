@@ -42,6 +42,10 @@ export function GetDevices() {
   return window['go']['main']['App']['GetDevices']();
 }
 
+export function GetMd5File() {
+  return window['go']['main']['App']['GetMd5File']();
+}
+
 export function GetUploadFile() {
   return window['go']['main']['App']['GetUploadFile']();
 }
@@ -94,6 +98,10 @@ export function SetCameraIndexWithToken(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['SetCameraIndexWithToken'](arg1, arg2, arg3, arg4);
 }
 
+export function SetMd5File(arg1) {
+  return window['go']['main']['App']['SetMd5File'](arg1);
+}
+
 export function SetUploadFile(arg1) {
   return window['go']['main']['App']['SetUploadFile'](arg1);
 }
@@ -106,6 +114,6 @@ export function TestDevice(arg1) {
   return window['go']['main']['App']['TestDevice'](arg1);
 }
 
-export function UpdateDevices(arg1, arg2, arg3) {
-  return window['go']['main']['App']['UpdateDevices'](arg1, arg2, arg3);
+export function UpdateDevices(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['UpdateDevices'](arg1, arg2, arg3, arg4);
 }
