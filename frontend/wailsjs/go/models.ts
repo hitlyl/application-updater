@@ -158,6 +158,42 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class BackupResult {
+	    ip: string;
+	    success: boolean;
+	    message: string;
+	    backupPath: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new BackupResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ip = source["ip"];
+	        this.success = source["success"];
+	        this.message = source["message"];
+	        this.backupPath = source["backupPath"];
+	    }
+	}
+	export class BackupSettings {
+	    storageFolder: string;
+	    regionName: string;
+	    username: string;
+	    password: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new BackupSettings(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.storageFolder = source["storageFolder"];
+	        this.regionName = source["regionName"];
+	        this.username = source["username"];
+	        this.password = source["password"];
+	    }
+	}
 	export class Camera {
 	    taskId: string;
 	    deviceName: string;
@@ -289,6 +325,26 @@ export namespace main {
 	
 	
 	
+	export class RestoreResult {
+	    ip: string;
+	    success: boolean;
+	    message: string;
+	    originalPath: string;
+	    backupPath: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new RestoreResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ip = source["ip"];
+	        this.success = source["success"];
+	        this.message = source["message"];
+	        this.originalPath = source["originalPath"];
+	        this.backupPath = source["backupPath"];
+	    }
+	}
 	
 	export class TimeSyncResult {
 	    ip: string;

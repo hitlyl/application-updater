@@ -13,11 +13,13 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/sqweek/dialog"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -193,6 +195,31 @@ type TimeSyncResult struct {
 	Success   bool   `json:"success"`
 	Message   string `json:"message"`
 	Timestamp string `json:"timestamp"`
+}
+
+// BackupResult represents the result of a device backup operation
+type BackupResult struct {
+	IP         string `json:"ip"`
+	Success    bool   `json:"success"`
+	Message    string `json:"message"`
+	BackupPath string `json:"backupPath"`
+}
+
+// BackupSettings stores persistent settings for device backup
+type BackupSettings struct {
+	StorageFolder string `json:"storageFolder"`
+	RegionName    string `json:"regionName"`
+	Username      string `json:"username"`
+	Password      string `json:"password"`
+}
+
+// RestoreResult represents the result of a device database restoration operation
+type RestoreResult struct {
+	IP           string `json:"ip"`
+	Success      bool   `json:"success"`
+	Message      string `json:"message"`
+	OriginalPath string `json:"originalPath"`
+	BackupPath   string `json:"backupPath"`
 }
 
 // 创建一个优化的http传输层
@@ -910,7 +937,7 @@ func (a *App) SetUploadFile(filename string) string {
 	if _, err := os.Stat(expectedPath); err == nil {
 		fmt.Printf("文件已存在于目标位置，将被覆盖: %s\n", expectedPath)
 	}
-	
+
 	// 尝试在多个位置寻找文件
 	possibleLocations := []string{
 		filename,                         // 相对路径
@@ -1214,7 +1241,7 @@ func (a *App) uploadBinaryWithMd5(ip, token, md5FileName string) (bool, string) 
 	if md5FileName != "" {
 		md5FilePath = a.GetMd5File()
 		fmt.Printf("DEBUG: 将包含MD5文件: %s\n", md5FilePath)
-		
+
 		// 检查MD5文件是否存在
 		if _, err := os.Stat(md5FilePath); err != nil {
 			fmt.Printf("WARNING: MD5文件不存在或无法访问: %s, 错误: %v\n", md5FilePath, err)
@@ -1267,7 +1294,7 @@ func (a *App) uploadBinaryWithMd5(ip, token, md5FileName string) (bool, string) 
 			// 继续而不使用MD5文件
 		} else {
 			defer md5File.Close()
-			
+
 			fmt.Printf("DEBUG: 创建multipart表单字段 'md5file'\n")
 			md5Part, err := writer.CreateFormFile("md5file", filepath.Base(md5FilePath))
 			if err != nil {
@@ -2451,4 +2478,492 @@ func (a *App) syncSingleDeviceTime(deviceIP, username, password, dateTimeString 
 	result.Success = true
 	result.Message = "时间同步成功"
 	return result
+}
+
+// BackupDevices backs up application database files from devices
+func (a *App) BackupDevices(username, password, storageFolder, regionName string, deviceIPs []string) []BackupResult {
+	// Save the settings for persistence
+	err := a.SaveBackupSettings(storageFolder, regionName, username, password)
+	if err != nil {
+		fmt.Printf("警告: 保存备份设置失败: %v\n", err)
+	}
+
+	// 创建结果通道
+	resultChan := make(chan BackupResult, len(deviceIPs))
+
+	// 控制最大并发数量
+	maxConcurrent := 8
+	if len(deviceIPs) < maxConcurrent {
+		maxConcurrent = len(deviceIPs)
+	}
+
+	// 使用通道控制并发
+	deviceChan := make(chan string, len(deviceIPs))
+	for _, ip := range deviceIPs {
+		deviceChan <- ip
+	}
+	close(deviceChan)
+
+	// 使用WaitGroup等待所有goroutine完成
+	var wg sync.WaitGroup
+
+	fmt.Printf("DEBUG: 开始备份设备数据，存储路径: %s/%s\n", storageFolder, regionName)
+
+	// 启动工作协程池
+	fmt.Printf("DEBUG: 启动 %d 个工作协程处理备份\n", maxConcurrent)
+	for i := 0; i < maxConcurrent; i++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+
+			for deviceIP := range deviceChan {
+				fmt.Printf("DEBUG: [Worker-%d] 开始备份设备 %s 的数据\n", workerID, deviceIP)
+				result := a.backupSingleDevice(deviceIP, username, password, storageFolder, regionName, workerID)
+				resultChan <- result
+			}
+		}(i)
+	}
+
+	// 等待所有goroutine完成并关闭结果通道
+	go func() {
+		wg.Wait()
+		close(resultChan)
+		fmt.Printf("DEBUG: 所有设备备份处理完成\n")
+	}()
+
+	// 收集结果
+	var results []BackupResult
+	for result := range resultChan {
+		results = append(results, result)
+	}
+
+	return results
+}
+
+// backupSingleDevice backs up database file from a single device
+func (a *App) backupSingleDevice(deviceIP, username, password, storageFolder, regionName string, workerID int) BackupResult {
+	result := BackupResult{
+		IP:         deviceIP,
+		Success:    false,
+		Message:    "",
+		BackupPath: "",
+	}
+
+	// 要备份的远程文件路径
+	remotePath := "/var/lib/application-web/db/application-web.db"
+
+	// 创建本地存储目录
+	localDir := filepath.Join(storageFolder, regionName, deviceIP)
+	if err := os.MkdirAll(localDir, 0755); err != nil {
+		errorMsg := fmt.Sprintf("创建目录失败: %v", err)
+		fmt.Printf("ERROR: [Worker-%d] %s\n", workerID, errorMsg)
+		result.Message = errorMsg
+		return result
+	}
+
+	// 本地文件路径
+	localFilePath := filepath.Join(localDir, "application-web.db")
+	result.BackupPath = localFilePath
+
+	// 创建SSH客户端配置
+	config := &ssh.ClientConfig{
+		User: username,
+		Auth: []ssh.AuthMethod{
+			ssh.Password(password),
+		},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // 在生产环境中应使用更安全的方法
+		Timeout:         10 * time.Second,
+	}
+
+	// 连接SSH服务器
+	addr := fmt.Sprintf("%s:22", deviceIP)
+	client, err := ssh.Dial("tcp", addr, config)
+	if err != nil {
+		errorMsg := fmt.Sprintf("SSH连接失败: %v", err)
+		fmt.Printf("ERROR: [Worker-%d] %s\n", workerID, errorMsg)
+		result.Message = errorMsg
+		return result
+	}
+	defer client.Close()
+
+	fmt.Printf("DEBUG: [Worker-%d] 已成功连接到设备 %s\n", workerID, deviceIP)
+
+	// 创建SCP客户端会话
+	session, err := client.NewSession()
+	if err != nil {
+		errorMsg := fmt.Sprintf("创建SSH会话失败: %v", err)
+		fmt.Printf("ERROR: [Worker-%d] %s\n", workerID, errorMsg)
+		result.Message = errorMsg
+		return result
+	}
+	defer session.Close()
+
+	// 使用'cat'命令读取远程文件
+	fmt.Printf("DEBUG: [Worker-%d] 读取远程文件: %s\n", workerID, remotePath)
+	output, err := session.CombinedOutput(fmt.Sprintf("cat %s", remotePath))
+	if err != nil {
+		errorMsg := fmt.Sprintf("读取远程文件失败: %v", err)
+		fmt.Printf("ERROR: [Worker-%d] %s\n", workerID, errorMsg)
+		result.Message = errorMsg
+		return result
+	}
+
+	// 将读取的内容写入本地文件
+	fmt.Printf("DEBUG: [Worker-%d] 写入本地文件: %s\n", workerID, localFilePath)
+	if err := os.WriteFile(localFilePath, output, 0644); err != nil {
+		errorMsg := fmt.Sprintf("写入本地文件失败: %v", err)
+		fmt.Printf("ERROR: [Worker-%d] %s\n", workerID, errorMsg)
+		result.Message = errorMsg
+		return result
+	}
+
+	// 备份成功
+	successMsg := fmt.Sprintf("成功备份数据库到 %s", localFilePath)
+	fmt.Printf("DEBUG: [Worker-%d] %s\n", workerID, successMsg)
+	result.Success = true
+	result.Message = successMsg
+	return result
+}
+
+// SaveBackupSettings saves the backup settings to a file in the configDir
+func (a *App) SaveBackupSettings(storageFolder, regionName, username, password string) error {
+	settings := BackupSettings{
+		StorageFolder: storageFolder,
+		RegionName:    regionName,
+		Username:      username,
+		Password:      password,
+	}
+
+	// Create the settings file path
+	settingsFilePath := filepath.Join(a.configDir, "backup_settings.json")
+
+	// Marshal to JSON
+	jsonData, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return fmt.Errorf("无法序列化备份设置: %v", err)
+	}
+
+	// Write to file
+	err = os.WriteFile(settingsFilePath, jsonData, 0644)
+	if err != nil {
+		return fmt.Errorf("无法保存备份设置到文件: %v", err)
+	}
+
+	fmt.Printf("备份设置已保存到: %s\n", settingsFilePath)
+	return nil
+}
+
+// GetBackupSettings loads the backup settings from the config directory
+func (a *App) GetBackupSettings() (BackupSettings, error) {
+	// Create default settings
+	defaultSettings := BackupSettings{
+		StorageFolder: "",
+		RegionName:    "",
+		Username:      "root",
+		Password:      "ematech",
+	}
+
+	// Get the settings file path
+	settingsFilePath := filepath.Join(a.configDir, "backup_settings.json")
+
+	// Check if file exists
+	_, err := os.Stat(settingsFilePath)
+	if os.IsNotExist(err) {
+		fmt.Println("备份设置文件不存在，使用默认设置")
+		return defaultSettings, nil
+	}
+
+	// Read and parse the settings file
+	jsonData, err := os.ReadFile(settingsFilePath)
+	if err != nil {
+		fmt.Printf("读取备份设置文件失败: %v，使用默认设置\n", err)
+		return defaultSettings, nil
+	}
+
+	// Unmarshal the JSON data
+	var settings BackupSettings
+	err = json.Unmarshal(jsonData, &settings)
+	if err != nil {
+		fmt.Printf("解析备份设置文件失败: %v，使用默认设置\n", err)
+		return defaultSettings, nil
+	}
+
+	fmt.Println("成功加载备份设置")
+	return settings, nil
+}
+
+// RestoreDeviceDB restores a database file to a device
+func (a *App) RestoreDeviceDB(deviceIP, username, password, backupFilePath string) RestoreResult {
+	result := RestoreResult{
+		IP:           deviceIP,
+		Success:      false,
+		Message:      "",
+		OriginalPath: backupFilePath,
+		BackupPath:   "",
+	}
+
+	// 检查备份文件是否存在
+	if _, err := os.Stat(backupFilePath); os.IsNotExist(err) {
+		result.Message = fmt.Sprintf("备份文件不存在: %v", err)
+		return result
+	}
+
+	// 创建SSH客户端配置
+	config := &ssh.ClientConfig{
+		User: username,
+		Auth: []ssh.AuthMethod{
+			ssh.Password(password),
+		},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // 在生产环境中应使用更安全的方法
+		Timeout:         10 * time.Second,
+	}
+
+	// 连接SSH服务器
+	addr := fmt.Sprintf("%s:22", deviceIP)
+	client, err := ssh.Dial("tcp", addr, config)
+	if err != nil {
+		result.Message = fmt.Sprintf("SSH连接失败: %v", err)
+		return result
+	}
+	defer client.Close()
+
+	fmt.Printf("已成功连接到设备 %s\n", deviceIP)
+
+	// 1. 停止application-web服务
+	if err := executeSSHCommand(client, "systemctl stop application-web"); err != nil {
+		result.Message = fmt.Sprintf("停止application-web服务失败: %v", err)
+		return result
+	}
+	fmt.Printf("已停止设备 %s 上的application-web服务\n", deviceIP)
+
+	// 2. 备份当前数据库文件
+	currentTime := time.Now().Format("20060102_150405")
+	remoteBackupPath := fmt.Sprintf("/var/lib/application-web/db/application-web.db.bak_%s", currentTime)
+	if err := executeSSHCommand(client, fmt.Sprintf("cp /var/lib/application-web/db/application-web.db %s", remoteBackupPath)); err != nil {
+		// 尝试重新启动服务，避免服务停止但恢复失败
+		_ = executeSSHCommand(client, "systemctl start application-web")
+		result.Message = fmt.Sprintf("备份当前数据库文件失败: %v", err)
+		return result
+	}
+	fmt.Printf("已备份设备 %s 上的数据库文件到 %s\n", deviceIP, remoteBackupPath)
+	result.BackupPath = remoteBackupPath
+
+	// 3. 使用SCP将备份文件复制到设备
+	err = scpFileToRemote(backupFilePath, "/var/lib/application-web/db/application-web.db", client)
+	if err != nil {
+		// 尝试重新启动服务，避免服务停止但恢复失败
+		_ = executeSSHCommand(client, "systemctl start application-web")
+		result.Message = fmt.Sprintf("上传备份文件到设备失败: %v", err)
+		return result
+	}
+	fmt.Printf("已将备份文件上传到设备 %s\n", deviceIP)
+
+	// 4. 启动application-web服务
+	if err := executeSSHCommand(client, "systemctl start application-web"); err != nil {
+		result.Message = fmt.Sprintf("启动application-web服务失败: %v", err)
+		return result
+	}
+	fmt.Printf("已重新启动设备 %s 上的application-web服务\n", deviceIP)
+
+	// 恢复成功
+	result.Success = true
+	result.Message = fmt.Sprintf("数据库恢复成功，原始数据库已备份到 %s", remoteBackupPath)
+	return result
+}
+
+// RestoreDevicesDB restores a database file to multiple devices concurrently
+func (a *App) RestoreDevicesDB(username, password, storageFolder, regionName string, deviceIPs []string) []RestoreResult {
+	fmt.Printf("RestoreDevicesDB 被调用: 用户名=%s, 存储文件夹=%s, 区域=%s, 设备数量=%d\n",
+		username, storageFolder, regionName, len(deviceIPs))
+
+	// Save the storage folder and region settings for persistence
+	err := a.SaveBackupSettings(storageFolder, regionName, username, password)
+	if err != nil {
+		fmt.Printf("警告: 保存备份设置失败: %v\n", err)
+	}
+
+	// 创建结果通道
+	resultChan := make(chan RestoreResult, len(deviceIPs))
+
+	// 控制最大并发数量
+	maxConcurrent := 8
+	if len(deviceIPs) < maxConcurrent {
+		maxConcurrent = len(deviceIPs)
+	}
+
+	// 使用通道控制并发
+	deviceChan := make(chan string, len(deviceIPs))
+	for _, ip := range deviceIPs {
+		deviceChan <- ip
+	}
+	close(deviceChan)
+
+	// 使用WaitGroup等待所有goroutine完成
+	var wg sync.WaitGroup
+
+	fmt.Printf("DEBUG: 开始从 %s/%s 恢复设备数据\n", storageFolder, regionName)
+
+	// 启动工作协程池
+	fmt.Printf("DEBUG: 启动 %d 个工作协程处理恢复\n", maxConcurrent)
+	for i := 0; i < maxConcurrent; i++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+
+			for deviceIP := range deviceChan {
+				// 构建对应IP的备份文件路径
+				backupFilePath := filepath.Join(storageFolder, regionName, deviceIP, "application-web.db")
+
+				// 检查文件是否存在
+				if _, err := os.Stat(backupFilePath); os.IsNotExist(err) {
+					fmt.Printf("DEBUG: [Worker-%d] 设备 %s 的备份文件不存在: %s\n", workerID, deviceIP, backupFilePath)
+					resultChan <- RestoreResult{
+						IP:           deviceIP,
+						Success:      false,
+						Message:      fmt.Sprintf("未找到备份文件: %s", backupFilePath),
+						OriginalPath: backupFilePath,
+						BackupPath:   "",
+					}
+					continue
+				}
+
+				fmt.Printf("DEBUG: [Worker-%d] 开始恢复设备 %s 的数据，使用备份文件: %s\n", workerID, deviceIP, backupFilePath)
+				result := a.RestoreDeviceDB(deviceIP, username, password, backupFilePath)
+				resultChan <- result
+			}
+		}(i)
+	}
+
+	// 等待所有goroutine完成并关闭结果通道
+	go func() {
+		wg.Wait()
+		close(resultChan)
+		fmt.Printf("DEBUG: 所有设备数据恢复处理完成\n")
+	}()
+
+	// 收集结果
+	var results []RestoreResult
+	for result := range resultChan {
+		results = append(results, result)
+	}
+
+	fmt.Printf("RestoreDevicesDB 执行完成，返回 %d 个结果\n", len(results))
+	return results
+}
+
+// executeSSHCommand executes a shell command on the remote server via SSH
+func executeSSHCommand(client *ssh.Client, command string) error {
+	session, err := client.NewSession()
+	if err != nil {
+		return fmt.Errorf("创建SSH会话失败: %v", err)
+	}
+	defer session.Close()
+
+	var stdout, stderr bytes.Buffer
+	session.Stdout = &stdout
+	session.Stderr = &stderr
+
+	err = session.Run(command)
+	if err != nil {
+		return fmt.Errorf("执行命令失败: %v, 错误输出: %s", err, stderr.String())
+	}
+
+	return nil
+}
+
+// scpFileToRemote copies a local file to the remote server
+func scpFileToRemote(localPath, remotePath string, client *ssh.Client) error {
+	// 读取本地文件
+	content, err := os.ReadFile(localPath)
+	if err != nil {
+		return fmt.Errorf("读取本地文件失败: %v", err)
+	}
+
+	// 创建新的会话
+	session, err := client.NewSession()
+	if err != nil {
+		return fmt.Errorf("创建SSH会话失败: %v", err)
+	}
+	defer session.Close()
+
+	// 准备通过stdin写入文件
+	stdin, err := session.StdinPipe()
+	if err != nil {
+		return fmt.Errorf("创建stdin管道失败: %v", err)
+	}
+
+	// 设置stdout和stderr
+	var stdout, stderr bytes.Buffer
+	session.Stdout = &stdout
+	session.Stderr = &stderr
+
+	// 启动scp会话以接收文件
+	err = session.Start(fmt.Sprintf("cat > %s", remotePath))
+	if err != nil {
+		return fmt.Errorf("启动scp命令失败: %v", err)
+	}
+
+	// 通过stdin写入文件内容
+	_, err = stdin.Write(content)
+	if err != nil {
+		return fmt.Errorf("写入文件内容失败: %v", err)
+	}
+	stdin.Close()
+
+	// 等待命令完成
+	err = session.Wait()
+	if err != nil {
+		return fmt.Errorf("scp命令执行失败: %v, 错误输出: %s", err, stderr.String())
+	}
+
+	return nil
+}
+
+// SelectFolder opens a folder selection dialog and returns the selected path
+func (a *App) SelectFolder() (string, error) {
+	// Create a channel to receive the folder path
+	resultChan := make(chan string, 1)
+	errorChan := make(chan error, 1)
+
+	// Open the dialog in a goroutine to avoid blocking the UI
+	go func() {
+		// Get the current working directory as default
+		currentDir, err := os.Getwd()
+		if err != nil {
+			currentDir = ""
+		}
+
+		// Run in the main thread - this is a workaround for macOS to avoid "cannot make directory/file selector modal" error
+		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
+
+		// Create a native folder dialog
+		dialog := dialog.Directory().SetStartDir(currentDir).Title("选择文件夹")
+
+		// Show the dialog and get the result
+		path, err := dialog.Browse()
+		if err != nil {
+			// Check if this is a cancellation error
+			if strings.Contains(err.Error(), "Cancelled") ||
+				strings.Contains(err.Error(), "canceled") ||
+				strings.Contains(err.Error(), "cancelled") {
+				errorChan <- fmt.Errorf("CANCELED")
+				return
+			}
+			errorChan <- err
+			return
+		}
+
+		resultChan <- path
+	}()
+
+	// Wait for the result or timeout
+	select {
+	case path := <-resultChan:
+		return path, nil
+	case err := <-errorChan:
+		return "", err
+	case <-time.After(1 * time.Minute): // Add a timeout
+		return "", fmt.Errorf("选择文件夹超时")
+	}
 }

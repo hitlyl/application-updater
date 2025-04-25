@@ -6,6 +6,10 @@ export function AddDevice(arg1) {
   return window['go']['main']['App']['AddDevice'](arg1);
 }
 
+export function BackupDevices(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['BackupDevices'](arg1, arg2, arg3, arg4, arg5);
+}
+
 export function CleanupTempFiles() {
   return window['go']['main']['App']['CleanupTempFiles']();
 }
@@ -20,6 +24,10 @@ export function ConfigureCameraWithToken(arg1, arg2, arg3, arg4, arg5) {
 
 export function ConfigureCamerasFromData(arg1, arg2, arg3, arg4, arg5) {
   return window['go']['main']['App']['ConfigureCamerasFromData'](arg1, arg2, arg3, arg4, arg5);
+}
+
+export function GetBackupSettings() {
+  return window['go']['main']['App']['GetBackupSettings']();
 }
 
 export function GetCameraConfig(arg1, arg2, arg3, arg4) {
@@ -78,6 +86,18 @@ export function RemoveDevice(arg1) {
   return window['go']['main']['App']['RemoveDevice'](arg1);
 }
 
+export function RestoreDeviceDB(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['RestoreDeviceDB'](arg1, arg2, arg3, arg4);
+}
+
+export function RestoreDevicesDB(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['RestoreDevicesDB'](arg1, arg2, arg3, arg4, arg5);
+}
+
+export function SaveBackupSettings(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['SaveBackupSettings'](arg1, arg2, arg3, arg4);
+}
+
 export function SaveDevices() {
   return window['go']['main']['App']['SaveDevices']();
 }
@@ -88,6 +108,10 @@ export function SaveExcelData(arg1) {
 
 export function ScanIPRange(arg1, arg2) {
   return window['go']['main']['App']['ScanIPRange'](arg1, arg2);
+}
+
+export function SelectFolder() {
+  return window['go']['main']['App']['SelectFolder']();
 }
 
 export function SetCameraIndex(arg1, arg2, arg3, arg4, arg5) {

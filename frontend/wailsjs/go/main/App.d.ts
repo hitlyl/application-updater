@@ -4,6 +4,8 @@ import {main} from '../models';
 
 export function AddDevice(arg1:string):Promise<main.Device>;
 
+export function BackupDevices(arg1:string,arg2:string,arg3:string,arg4:string,arg5:Array<string>):Promise<Array<main.BackupResult>>;
+
 export function CleanupTempFiles():Promise<void>;
 
 export function ConfigureCamera(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:number):Promise<boolean|string>;
@@ -11,6 +13,8 @@ export function ConfigureCamera(arg1:string,arg2:string,arg3:string,arg4:string,
 export function ConfigureCameraWithToken(arg1:string,arg2:string,arg3:string,arg4:string,arg5:number):Promise<boolean|string>;
 
 export function ConfigureCamerasFromData(arg1:Array<main.ExcelRow>,arg2:string,arg3:string,arg4:string,arg5:number):Promise<Array<main.CameraConfigResult>>;
+
+export function GetBackupSettings():Promise<main.BackupSettings>;
 
 export function GetCameraConfig(arg1:string,arg2:string,arg3:string,arg4:string):Promise<main.CameraConfig>;
 
@@ -40,11 +44,19 @@ export function RefreshDevices():Promise<Array<main.Device>>;
 
 export function RemoveDevice(arg1:string):Promise<void>;
 
+export function RestoreDeviceDB(arg1:string,arg2:string,arg3:string,arg4:string):Promise<main.RestoreResult>;
+
+export function RestoreDevicesDB(arg1:string,arg2:string,arg3:string,arg4:string,arg5:Array<string>):Promise<Array<main.RestoreResult>>;
+
+export function SaveBackupSettings(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
+
 export function SaveDevices():Promise<void>;
 
 export function SaveExcelData(arg1:string):Promise<string>;
 
 export function ScanIPRange(arg1:string,arg2:string):Promise<Array<main.Device>>;
+
+export function SelectFolder():Promise<string>;
 
 export function SetCameraIndex(arg1:string,arg2:string,arg3:string,arg4:string,arg5:number):Promise<boolean|string>;
 

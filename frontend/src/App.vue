@@ -2,6 +2,7 @@
 import { ref, onMounted, computed } from "vue";
 import CameraConfig from "./components/CameraConfig.vue";
 import TimeSync from "./components/TimeSync.vue";
+import DeviceBackup from "./components/DeviceBackup.vue";
 
 // 避免TypeScript错误的类型声明
 declare global {
@@ -553,7 +554,7 @@ async function updateByBuildTime(buildTime: string) {
 <template>
   <div class="container">
     <div class="header">
-      <h1>设备更新管理 <span class="version">v1.1.5</span></h1>
+      <h1>设备更新管理 <span class="version">v1.1.6</span></h1>
     </div>
 
     <div class="tabs">
@@ -580,6 +581,12 @@ async function updateByBuildTime(buildTime: string) {
         @click="activeTab = 'time'"
       >
         时间同步
+      </button>
+      <button
+        :class="{ active: activeTab === 'backup' }"
+        @click="activeTab = 'backup'"
+      >
+        设备备份管理
       </button>
     </div>
 
@@ -950,6 +957,11 @@ async function updateByBuildTime(buildTime: string) {
     <div v-if="activeTab === 'time'" class="tab-content">
       <TimeSync />
     </div>
+
+    <!-- Device Backup Tab -->
+    <div v-if="activeTab === 'backup'" class="tab-content">
+      <DeviceBackup />
+    </div>
   </div>
 </template>
 
@@ -976,9 +988,35 @@ body {
 }
 
 .container {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 20px;
+  max-width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.app-header {
+  padding: 15px 20px;
+  background-color: var(--card-background);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.tabs {
+  display: flex;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  background-color: var(--card-background);
+  border-bottom: 1px solid var(--border-color);
+  padding: 0 20px;
+}
+
+.tab-content {
+  flex: 1;
+  overflow: auto;
+  padding: 0;
+  background-color: var(--background-color);
 }
 
 h1 {
@@ -1066,51 +1104,6 @@ button:disabled {
   font-size: 16px;
   width: 100%;
   margin-top: 10px;
-}
-
-.tabs {
-  display: flex;
-  margin-bottom: 20px;
-  border-bottom: 1px solid var(--border-color);
-}
-
-.tabs button {
-  padding: 10px 20px;
-  background-color: transparent;
-  color: var(--text-color);
-  border: none;
-  border-bottom: 2px solid transparent;
-  cursor: pointer;
-  font-size: 16px;
-  transition: all 0.2s;
-  margin-right: 10px;
-}
-
-.tabs button.active {
-  color: var(--primary-color);
-  border-bottom: 2px solid var(--primary-color);
-}
-
-.tab-content {
-  margin-top: 20px;
-}
-
-.device-table {
-  width: 100%;
-  border-collapse: collapse;
-  margin-top: 10px;
-}
-
-.device-table th,
-.device-table td {
-  padding: 12px;
-  text-align: left;
-  border-bottom: 1px solid var(--border-color);
-}
-
-.device-table th {
-  background-color: #f8f9fa;
-  font-weight: 600;
 }
 
 .header-with-action {
@@ -1493,5 +1486,41 @@ button:disabled {
   font-size: 12px;
   color: #666;
   margin-left: 4px;
+}
+
+/* 恢复被删除的样式 */
+.tabs button {
+  padding: 10px 20px;
+  background-color: transparent;
+  color: var(--text-color);
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  font-size: 16px;
+  transition: all 0.2s;
+  margin-right: 10px;
+}
+
+.tabs button.active {
+  color: var(--primary-color);
+  border-bottom: 2px solid var(--primary-color);
+}
+
+.device-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 10px;
+}
+
+.device-table th,
+.device-table td {
+  padding: 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.device-table th {
+  background-color: #f8f9fa;
+  font-weight: 600;
 }
 </style>
