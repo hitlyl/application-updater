@@ -1,17 +1,20 @@
 package backup
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
 
-	"application-updater/internal/models"
 	"application-updater/internal/services/device"
+
+	"golang.org/x/crypto/ssh"
 )
 
 // Service handles backup operations for device configurations and databases
@@ -33,7 +36,7 @@ type BackupResult struct {
 	Message         string `json:"message"`
 	BackupTimestamp string `json:"backupTimestamp"`
 	DeviceIP        string `json:"deviceIP"`
-	DeviceSN        string `json:"deviceSN"`
+	DeviceSN        string `json:"deviceSN,omitempty"`
 }
 
 // BackupSettings represents the settings for backup operations
@@ -45,42 +48,44 @@ type BackupSettings struct {
 }
 
 // BackupDevices backs up all device configurations and databases
-func (s *Service) BackupDevices(isManual bool, autoBackupDeviceOnce bool, backupSettings *BackupSettings) ([]BackupResult, error) {
+func (s *Service) BackupDevices(backupSettings *BackupSettings, username string, password string, selectIps []string) ([]BackupResult, error) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
-	devices := s.deviceService.GetDevices()
+	// Default credentials if not provided
+	if username == "" {
+		username = "admin" // Default username
+	}
+	if password == "" {
+		password = "admin" // Default password
+	}
 
 	var results []BackupResult
-	for _, device := range devices {
-		if device.Status != "online" && device.Status != "offline-busy" {
-			results = append(results, BackupResult{
-				Success:  false,
-				Message:  fmt.Sprintf("device offline: %s", device.Status),
-				DeviceIP: device.IP,
-				DeviceSN: device.IP, // Using IP as SN since we don't have that field
-			})
-			continue
-		}
+	for _, ip := range selectIps {
 
-		result, err := s.backupSingleDevice(context.Background(), &device, isManual, backupSettings.BackupPath)
+		result, err := s.backupSingleDevice(context.Background(), ip, backupSettings.BackupPath, username, password)
 		if err != nil {
 			results = append(results, BackupResult{
 				Success:  false,
 				Message:  err.Error(),
-				DeviceIP: device.IP,
-				DeviceSN: device.IP, // Using IP as SN since we don't have that field
+				DeviceIP: ip,
 			})
 			continue
 		}
 		results = append(results, *result)
 	}
 
+	// Update last backup time
+	backupSettings.LastBackupTime = time.Now().Unix()
+	if err := s.SaveBackupSettings(backupSettings); err != nil {
+		fmt.Printf("Warning: Failed to update backup settings after backup: %v\n", err)
+	}
+
 	return results, nil
 }
 
 // backupSingleDevice backs up a single device configuration and database
-func (s *Service) backupSingleDevice(ctx context.Context, device *models.Device, isManual bool, backupPath string) (*BackupResult, error) {
+func (s *Service) backupSingleDevice(ctx context.Context, ip string, backupPath string, username string, password string) (*BackupResult, error) {
 	if backupPath == "" {
 		return nil, fmt.Errorf("backup path is empty")
 	}
@@ -92,7 +97,7 @@ func (s *Service) backupSingleDevice(ctx context.Context, device *models.Device,
 	}
 
 	// Setup device-specific backup directory
-	deviceDir := filepath.Join(backupPath, device.IP) // Using IP as device identifier
+	deviceDir := filepath.Join(backupPath, ip) // Using IP as device identifier
 	err = os.MkdirAll(deviceDir, 0755)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create device backup directory: %w", err)
@@ -106,19 +111,81 @@ func (s *Service) backupSingleDevice(ctx context.Context, device *models.Device,
 		return nil, fmt.Errorf("failed to create timestamp backup directory: %w", err)
 	}
 
-	// TODO: Implement actual backup logic that was in app.go
-	// This would include operations like:
-	// - Downloading configuration files
-	// - Backing up database
-	// - Saving metadata
-	fmt.Printf("DEBUG: Backup completed for device %s at %s\n", device.IP, timestamp)
+	// Try to obtain authentication token - just to verify credentials
+	_, err = s.deviceService.LoginToDevice(ip, username, password)
+	if err != nil {
+		return nil, fmt.Errorf("failed to login to device: %w", err)
+	}
+
+	// Setup SSH client configuration
+	sshConfig := &ssh.ClientConfig{
+		User: username,
+		Auth: []ssh.AuthMethod{
+			ssh.Password(password),
+		},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // For development only! In production use proper host key verification
+		Timeout:         30 * time.Second,
+	}
+
+	// Connect to the device
+	client, err := ssh.Dial("tcp", fmt.Sprintf("%s:22", ip), sshConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to establish SSH connection: %w", err)
+	}
+	defer client.Close()
+
+	// 1. First stop the application service
+	fmt.Printf("Stopping application service on %s...\n", ip)
+	err = executeSSHCommand(client, "systemctl stop application-web")
+	if err != nil {
+		return nil, fmt.Errorf("failed to stop application service: %w", err)
+	}
+
+	// Wait a moment for the service to fully stop
+	time.Sleep(2 * time.Second)
+
+	// 2. Copy the database file to a temporary location
+	dbFilePath := "/var/lib/application-web/db/application-web.db"
+	localDbPath := filepath.Join(backupDir, "application-web.db")
+
+	// Create an SCP session to copy the file
+	fmt.Printf("Downloading database from %s...\n", ip)
+	err = scpFileFromRemote(client, dbFilePath, localDbPath)
+	if err != nil {
+		// Try to restart the service before returning error
+		_ = executeSSHCommand(client, "systemctl start application-web")
+		return nil, fmt.Errorf("failed to download database file: %w", err)
+	}
+
+	// 3. Restart the application service
+	fmt.Printf("Restarting application service on %s...\n", ip)
+	err = executeSSHCommand(client, "systemctl start application-web")
+	if err != nil {
+		return nil, fmt.Errorf("failed to restart application service: %w", err)
+	}
+
+	// 4. Create a metadata file with information about the backup
+	metadataPath := filepath.Join(backupDir, "metadata.json")
+	metadata := map[string]interface{}{
+		"timestamp":   timestamp,
+		"device_ip":   ip,
+		"backup_type": "database",
+	}
+
+	metadataBytes, err := json.Marshal(metadata)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create backup metadata: %w", err)
+	}
+
+	if err := os.WriteFile(metadataPath, metadataBytes, 0644); err != nil {
+		return nil, fmt.Errorf("failed to write backup metadata: %w", err)
+	}
 
 	return &BackupResult{
 		Success:         true,
 		Message:         "Backup completed successfully",
 		BackupTimestamp: timestamp,
-		DeviceIP:        device.IP,
-		DeviceSN:        device.IP, // Using IP as SN since we don't have that field
+		DeviceIP:        ip,
 	}, nil
 }
 

@@ -12,7 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -775,37 +775,81 @@ func (s *Service) GetRegions() ([]string, error) {
 }
 
 // UpdateDevicesFile 上传更新文件到设备
-func (s *Service) UpdateDevicesFile(filePath string, selectedBuildTime int64) ([]models.UpdateResult, error) {
-	// 检查文件是否存在
-	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		return nil, fmt.Errorf("文件不存在: %s", filePath)
+func (s *Service) UpdateDevicesFile(deviceIds []string, fileName string, fileBinary []byte, md5FileName string, md5FileBinary []byte, username, password string) ([]models.UpdateResult, error) {
+	// 创建临时文件存储二进制数据
+	tempFile, err := os.CreateTemp("", "update-*-"+fileName)
+	if err != nil {
+		return nil, fmt.Errorf("创建临时文件失败: %w", err)
+	}
+	defer os.Remove(tempFile.Name()) // 确保函数结束时删除临时文件
+
+	// 写入文件数据
+	if _, err := tempFile.Write(fileBinary); err != nil {
+		tempFile.Close()
+		return nil, fmt.Errorf("写入临时文件失败: %w", err)
+	}
+	tempFile.Close()
+
+	// 临时MD5文件路径
+	var tempMD5FilePath string
+
+	// 如果提供了MD5文件，创建临时MD5文件
+	if md5FileName != "" && len(md5FileBinary) > 0 {
+		tempMD5File, err := os.CreateTemp("", "md5-*-"+md5FileName)
+		if err != nil {
+			return nil, fmt.Errorf("创建临时MD5文件失败: %w", err)
+		}
+		defer os.Remove(tempMD5File.Name()) // 确保函数结束时删除临时文件
+
+		// 写入MD5文件数据
+		if _, err := tempMD5File.Write(md5FileBinary); err != nil {
+			tempMD5File.Close()
+			return nil, fmt.Errorf("写入临时MD5文件失败: %w", err)
+		}
+		tempMD5File.Close()
+
+		tempMD5FilePath = tempMD5File.Name()
 	}
 
-	// 检查MD5文件是否存在
-	md5Path := filePath + ".md5"
-	if _, err := os.Stat(md5Path); os.IsNotExist(err) {
-		return nil, fmt.Errorf("MD5文件不存在: %s", md5Path)
-	}
-
-	// 获取所有在线设备
+	// 获取需要更新的设备
 	s.mutex.RLock()
 	devices := make([]models.Device, 0)
-	for _, device := range s.filteredDevices {
-		// 跳过离线设备
-		if device.Status != "online" {
-			continue
+
+	// 如果指定了设备ID，则只更新指定的设备
+	if len(deviceIds) > 0 {
+		// 从数据库获取指定ID的设备
+		placeholders := make([]string, len(deviceIds))
+		args := make([]interface{}, len(deviceIds))
+		for i, id := range deviceIds {
+			placeholders[i] = "?"
+			args[i] = id
 		}
 
-		// 如果指定了 BuildTime 则过滤设备
-		if selectedBuildTime > 0 {
-			// 转换 BuildTime 字符串为 int64 进行比较
-			deviceBuildTime, err := strconv.ParseInt(device.BuildTime, 10, 64)
-			if err == nil && deviceBuildTime < selectedBuildTime {
+		// 构建查询
+		query := fmt.Sprintf("SELECT id, ip, build_time, status, region FROM devices WHERE id IN (%s) AND status = 'online'",
+			strings.Join(placeholders, ","))
+
+		rows, err := s.db.Query(query, args...)
+		if err != nil {
+			s.mutex.RUnlock()
+			return nil, fmt.Errorf("查询设备失败: %w", err)
+		}
+		defer rows.Close()
+
+		// 读取符合条件的设备
+		for rows.Next() {
+			var device models.Device
+			if err := rows.Scan(&device.ID, &device.IP, &device.BuildTime, &device.Status, &device.Region); err != nil {
+				continue
+			}
+			devices = append(devices, device)
+		}
+	} else {
+		// 如果未指定设备ID，则更新当前过滤条件下的所有在线设备
+		for _, device := range s.filteredDevices {
+			if device.Status == "online" {
 				devices = append(devices, device)
 			}
-		} else if selectedBuildTime <= 0 {
-			// 如果没有指定 BuildTime，则添加所有在线设备
-			devices = append(devices, device)
 		}
 	}
 	s.mutex.RUnlock()
@@ -835,7 +879,7 @@ func (s *Service) UpdateDevicesFile(filePath string, selectedBuildTime int64) ([
 				<-semaphore
 			}()
 
-			result, err := s.uploadUpdateFile(device.IP, filePath)
+			result, err := s.uploadUpdateFile(device.IP, fileName, md5FileName, tempFile.Name(), tempMD5FilePath, username, password)
 			if err != nil {
 				resultChan <- models.UpdateResult{
 					IP:      device.IP,
@@ -863,13 +907,20 @@ func (s *Service) UpdateDevicesFile(filePath string, selectedBuildTime int64) ([
 }
 
 // uploadUpdateFile 上传更新文件到单个设备
-func (s *Service) uploadUpdateFile(ip string, filePath string) (models.UpdateResult, error) {
+func (s *Service) uploadUpdateFile(ip string, fileName, md5FileName, filePath string, md5FilePath string, username, password string) (models.UpdateResult, error) {
 	result := models.UpdateResult{
 		IP:      ip,
 		Success: false,
 		Message: "",
 	}
 
+	// 首先登录获取token
+	token, err := s.Auth.LoginToDevice(ip, username, password)
+	if err != nil {
+		return result, fmt.Errorf("登录设备失败: %w", err)
+	}
+
+	fmt.Println("token", token)
 	// 打开文件
 	file, err := os.Open(filePath)
 	if err != nil {
@@ -877,22 +928,12 @@ func (s *Service) uploadUpdateFile(ip string, filePath string) (models.UpdateRes
 	}
 	defer file.Close()
 
-	// 打开MD5文件
-	md5File, err := os.Open(filePath + ".md5")
-	if err != nil {
-		return result, fmt.Errorf("无法打开MD5文件: %w", err)
-	}
-	defer md5File.Close()
-
-	// 获取文件名
-	fileName := filepath.Base(filePath)
-
 	// 创建multipart表单
 	var requestBody bytes.Buffer
 	writer := multipart.NewWriter(&requestBody)
 
 	// 添加file字段
-	fileWriter, err := writer.CreateFormFile("file", fileName)
+	fileWriter, err := writer.CreateFormFile("binary", fileName)
 	if err != nil {
 		return result, fmt.Errorf("创建表单文件字段失败: %w", err)
 	}
@@ -901,14 +942,24 @@ func (s *Service) uploadUpdateFile(ip string, filePath string) (models.UpdateRes
 		return result, fmt.Errorf("复制文件到表单失败: %w", err)
 	}
 
-	// 添加md5字段
-	md5Writer, err := writer.CreateFormFile("md5file", fileName+".md5")
-	if err != nil {
-		return result, fmt.Errorf("创建MD5表单字段失败: %w", err)
-	}
-	_, err = io.Copy(md5Writer, md5File)
-	if err != nil {
-		return result, fmt.Errorf("复制MD5文件到表单失败: %w", err)
+	// 如果提供了MD5文件，添加到表单
+	if md5FilePath != "" {
+		// 打开MD5文件
+		md5File, err := os.Open(md5FilePath)
+		if err != nil {
+			return result, fmt.Errorf("无法打开MD5文件: %w", err)
+		}
+		defer md5File.Close()
+
+		// 添加md5字段
+		md5Writer, err := writer.CreateFormFile("md5file", md5FileName)
+		if err != nil {
+			return result, fmt.Errorf("创建MD5表单字段失败: %w", err)
+		}
+		_, err = io.Copy(md5Writer, md5File)
+		if err != nil {
+			return result, fmt.Errorf("复制MD5文件到表单失败: %w", err)
+		}
 	}
 
 	// 关闭writer
@@ -918,14 +969,17 @@ func (s *Service) uploadUpdateFile(ip string, filePath string) (models.UpdateRes
 	}
 
 	// 创建请求
-	url := fmt.Sprintf("http://%s:8080/api/update", ip)
+	url := fmt.Sprintf("http://%s:8089/api/system/upgrade", ip)
 	req, err := http.NewRequest("POST", url, &requestBody)
 	if err != nil {
 		return result, fmt.Errorf("创建请求失败: %w", err)
 	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 
-	// 发送请求
+	// 添加token到请求头
+	req.Header.Set("Token", token)
+
+	// 	发送请求
 	client := &http.Client{
 		Timeout: 5 * time.Minute, // 设置较长的超时时间
 	}

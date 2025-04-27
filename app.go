@@ -273,7 +273,7 @@ func (a *App) ProcessExcelData(rows []models.ExcelRow, username, password, urlTe
 }
 
 // BackupDevices backs up the configuration and database of all devices
-func (a *App) BackupDevices(deviceIPs []string, username, password string) []models.BackupResult {
+func (a *App) BackupDevices(username, password string, storageDir, areaDir string, selectIps []string) []models.BackupResult {
 	// 从存储中获取备份设置
 	settings, err := a.backupService.GetBackupSettings()
 	if err != nil {
@@ -283,9 +283,12 @@ func (a *App) BackupDevices(deviceIPs []string, username, password string) []mod
 			BackupEnabled: true,
 		}
 	}
+	settings.BackupPath = storageDir
+	settings.BackupFreq = areaDir
+	a.backupService.SaveBackupSettings(settings)
 
 	// 执行备份
-	results, err := a.backupService.BackupDevices(true, false, settings)
+	results, err := a.backupService.BackupDevices( settings, username, password,selectIps)
 	if err != nil {
 		fmt.Printf("Error performing backup: %v\n", err)
 		return []models.BackupResult{}
@@ -306,16 +309,13 @@ func (a *App) BackupDevices(deviceIPs []string, username, password string) []mod
 }
 
 // RestoreDevicesDB restores device databases from backup
-func (a *App) RestoreDevicesDB(deviceIPs []string, username, password, filePath string) []models.RestoreResult {
-	return []models.RestoreResult{
-		{
-			IP:           "127.0.0.1",
-			Success:      true,
-			Message:      "Restored successfully",
-			OriginalPath: "original_path",
-			BackupPath:   filePath,
-		},
+func (a *App) RestoreDevicesDB(username, password, storageDir, areaDir string, selectIps []string) []models.RestoreResult {
+	results, err := a.backupService.RestoreDevicesDB(username, password, storageDir, areaDir, selectIps)
+	if err != nil {
+		fmt.Printf("Error performing restore: %v\n", err)
+		return []models.RestoreResult{}
 	}
+	return results
 }
 
 // GetBackupSettings gets the current backup settings
@@ -367,8 +367,8 @@ func (a *App) GetRegions() []string {
 }
 
 // UpdateDevicesFile uploads update files to devices with build time less than the selected build time
-func (a *App) UpdateDevicesFile(filePath string, selectedBuildTime int64) ([]models.UpdateResult, error) {
-	results, err := a.deviceService.UpdateDevicesFile(filePath, selectedBuildTime)
+func (a *App) UpdateDevicesFile(deviceIds []string, fileName string, fileBinary []byte, md5FileName string, md5FileBinary []byte, username string, password string) ([]models.UpdateResult, error) {
+	results, err := a.deviceService.UpdateDevicesFile(deviceIds, fileName, fileBinary, md5FileName, md5FileBinary, username, password)
 	if err != nil {
 		return nil, err
 	}

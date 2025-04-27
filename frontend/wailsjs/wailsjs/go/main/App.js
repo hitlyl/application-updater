@@ -6,8 +6,8 @@ export function AddDevice(arg1, arg2) {
   return window['go']['main']['App']['AddDevice'](arg1, arg2);
 }
 
-export function BackupDevices(arg1, arg2, arg3) {
-  return window['go']['main']['App']['BackupDevices'](arg1, arg2, arg3);
+export function BackupDevices(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['BackupDevices'](arg1, arg2, arg3, arg4, arg5);
 }
 
 export function ClearDevices() {
@@ -102,6 +102,6 @@ export function SyncDeviceTime(arg1, arg2, arg3) {
   return window['go']['main']['App']['SyncDeviceTime'](arg1, arg2, arg3);
 }
 
-export function UpdateDevicesFile(arg1, arg2) {
-  return window['go']['main']['App']['UpdateDevicesFile'](arg1, arg2);
+export function UpdateDevicesFile(arg1, arg2, arg3, arg4, arg5, arg6, arg7) {
+  return window['go']['main']['App']['UpdateDevicesFile'](arg1, arg2, arg3, arg4, arg5, arg6, arg7);
 }

@@ -4,7 +4,7 @@ import {models} from '../models';
 
 export function AddDevice(arg1:string,arg2:string):Promise<models.Device>;
 
-export function BackupDevices(arg1:Array<string>,arg2:string,arg3:string):Promise<Array<models.BackupResult>>;
+export function BackupDevices(arg1:string,arg2:string,arg3:string,arg4:string,arg5:Array<string>):Promise<Array<models.BackupResult>>;
 
 export function ClearDevices():Promise<void>;
 
@@ -52,4 +52,4 @@ export function SetRegionFilter(arg1:string):Promise<Array<models.Device>>;
 
 export function SyncDeviceTime(arg1:string,arg2:string,arg3:Array<string>):Promise<Array<models.TimeSyncResult>>;
 
-export function UpdateDevicesFile(arg1:string,arg2:number):Promise<Array<models.UpdateResult>>;
+export function UpdateDevicesFile(arg1:Array<string>,arg2:string,arg3:Array<number>,arg4:string,arg5:Array<number>,arg6:string,arg7:string):Promise<Array<models.UpdateResult>>;

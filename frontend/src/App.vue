@@ -553,7 +553,8 @@ async function addDevice() {
 // Remove a device
 async function removeDevice(device: Device) {
   if (!wailsBackend || typeof wailsBackend.RemoveDevice !== "function") {
-    alert("无法连接到后端服务");
+    console.error("无法连接到后端服务");
+    showNotification("无法连接到后端服务", "error");
     return;
   }
 
@@ -561,6 +562,7 @@ async function removeDevice(device: Device) {
   const deviceIndex = devices.value.findIndex((d) => d.id === device.id);
   if (deviceIndex === -1) {
     console.error(`找不到要删除的设备: ${device.ip}`);
+    showNotification(`找不到要删除的设备: ${device.ip}`, "error");
     return;
   }
 
@@ -581,6 +583,7 @@ async function removeDevice(device: Device) {
     // 等待结果
     await removeWithTimeout;
     console.log(`设备 ${device.ip} 已成功移除`);
+    showNotification(`设备 ${device.ip} 已成功移除`, "success");
 
     // 直接从本地设备列表中移除，不重新加载
     devices.value = devices.value.filter((d) => d.id !== device.id);
@@ -603,6 +606,10 @@ async function removeDevice(device: Device) {
 
     // 显示一个小提示，但不阻止操作完成
     console.warn(`注意: 设备可能未在后端完全移除: ${error}`);
+    showNotification(
+      `设备已从列表移除，但可能未在后端完全删除: ${error}`,
+      "warning"
+    );
   }
 }
 
@@ -670,64 +677,40 @@ async function scanDevices() {
 
 // Handle file selection
 async function handleFileSelect(event: Event) {
-  if (!wailsBackend || typeof wailsBackend.SetUploadFile !== "function") {
-    alert("无法连接到后端服务");
+  const input = event.target as HTMLInputElement;
+  if (!input.files || input.files.length === 0) {
     return;
   }
 
-  const input = event.target as HTMLInputElement;
-  if (input.files && input.files[0]) {
-    // 获取文件信息
-    const file = input.files[0];
-    const filename = file.name;
+  // 检查Wails后端是否可用
+  if (!wailsBackend) {
+    console.error("无法连接到后端服务: wailsBackend 未初始化");
+    showNotification("无法连接到后端服务", "error");
+    return;
+  }
 
-    try {
-      console.log("设置上传文件:", filename);
+  // 获取文件信息
+  const file = input.files[0];
+  const filename = file.name;
 
-      // 告知用户我们正在寻找文件
-      const fileStatus = document.getElementById("file-status");
-      if (fileStatus) {
-        fileStatus.textContent = "正在寻找文件...";
-        fileStatus.className = "file-status searching";
-      }
+  try {
+    console.log("设置上传文件:", filename);
 
-      // 调用后端设置上传文件
-      const filePath = await wailsBackend.SetUploadFile(filename);
+    selectedFile.value = filename;
 
-      if (!filePath) {
-        throw new Error("设置上传文件路径失败");
-      }
+    // 提供更详细的指导
+    showFileHelp.value = true;
+  } catch (error) {
+    console.error("设置上传文件失败:", error);
+    showNotification(`设置上传文件失败: ${error}`, "error");
+    selectedFile.value = "";
 
-      console.log("设置上传文件路径:", filePath);
-      selectedFile.value = filename;
-
-      // 更新文件状态UI
-      if (fileStatus) {
-        fileStatus.textContent = "文件已准备好";
-        fileStatus.className = "file-status ready";
-      }
-
-      // 提供更详细的指导
-      showFileHelp.value = true;
-    } catch (error) {
-      console.error("设置上传文件失败:", error);
-      alert(`设置上传文件失败: ${error}`);
-      selectedFile.value = "";
-
-      // 更新文件状态UI
-      const fileStatus = document.getElementById("file-status");
-      if (fileStatus) {
-        fileStatus.textContent = "文件未找到";
-        fileStatus.className = "file-status error";
-      }
-
-      // 重置文件输入框
-      input.value = "";
-    }
+    // 重置文件输入框
+    input.value = "";
   }
 }
 
-// 新增：处理MD5文件选择
+// 处理MD5文件选择
 async function handleMd5FileSelect(event: Event) {
   const input = event.target as HTMLInputElement;
   if (!input.files || input.files.length === 0) {
@@ -737,46 +720,25 @@ async function handleMd5FileSelect(event: Event) {
   const filename = input.files[0].name;
 
   if (!filename.endsWith(".md5")) {
-    alert("请选择.md5格式的文件");
+    showNotification("请选择.md5格式的文件", "warning");
     input.value = "";
     return;
   }
 
   // 检查Wails后端是否可用
-  if (!wailsBackend || typeof wailsBackend.SetMd5File !== "function") {
-    alert("后端服务不可用");
+  if (!wailsBackend) {
+    console.error("无法连接到后端服务: wailsBackend 未初始化");
+    showNotification("无法连接到后端服务", "error");
     return;
   }
 
   try {
     console.log("设置MD5文件:", filename);
 
-    // 告知用户我们正在寻找文件
-    const fileStatus = document.getElementById("md5-file-status");
-    if (fileStatus) {
-      fileStatus.textContent = "正在寻找文件...";
-      fileStatus.className = "file-status searching";
-    }
-
-    // SetMd5File不存在的情况下，简单地使用文件名
-    // const filePath = await backend.SetMd5File(filename);
-    const filePath = filename;
-
-    if (!filePath) {
-      throw new Error("设置MD5文件路径失败");
-    }
-
-    console.log("设置MD5文件路径:", filePath);
     selectedMd5File.value = filename;
-
-    // 更新文件状态UI
-    if (fileStatus) {
-      fileStatus.textContent = "MD5文件已准备好";
-      fileStatus.className = "file-status ready";
-    }
   } catch (error) {
     console.error("设置MD5文件失败:", error);
-    alert(`设置MD5文件失败: ${error}`);
+    showNotification(`设置MD5文件失败: ${error}`, "error");
     selectedMd5File.value = "";
 
     // 更新文件状态UI
@@ -813,48 +775,51 @@ async function updateSelectedDevices() {
 
   try {
     isLoading.value = true;
+    showNotification("正在读取文件...", "info");
+
+    // 获取文件输入元素
+    const fileInput = document.querySelector(
+      'input[type="file"]'
+    ) as HTMLInputElement;
+    const md5FileInput = document.querySelectorAll(
+      'input[type="file"]'
+    )[1] as HTMLInputElement; // 获取第二个文件输入元素 (MD5文件)
+
+    if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
+      throw new Error("无法找到更新文件，请重新选择");
+    }
+
+    // 读取更新文件二进制内容
+    const file = fileInput.files[0];
+    const fileArrayBuffer = await file.arrayBuffer();
+    const fileBinary = new Uint8Array(fileArrayBuffer);
+    const fileBinaryArray = Array.from(fileBinary);
+
+    // 读取MD5文件二进制内容（如果有）
+    let md5BinaryArray: number[] = [];
+    if (
+      selectedMd5File.value &&
+      md5FileInput &&
+      md5FileInput.files &&
+      md5FileInput.files.length > 0
+    ) {
+      const md5File = md5FileInput.files[0];
+      const md5ArrayBuffer = await md5File.arrayBuffer();
+      const md5Binary = new Uint8Array(md5ArrayBuffer);
+      md5BinaryArray = Array.from(md5Binary);
+    }
+
     showNotification("正在更新设备...", "info");
 
     // 调用后端的更新方法
     const results = await wailsBackend.UpdateDevicesFile(
-      selectedFile.value,
-      0 // 更新所有选中的设备
-    );
-
-    // 处理结果并显示
-    updateResults.value = results || [];
-    processUpdateResults(results);
-  } catch (error) {
-    console.error("更新设备失败:", error);
-    showNotification(`更新失败: ${error}`, "error");
-  } finally {
-    isLoading.value = false;
-  }
-}
-
-// 根据BUILD_TIME更新设备
-async function updateByBuildTime(buildTime) {
-  if (!selectedFile.value) {
-    showNotification("请选择更新文件", "error");
-    return;
-  }
-
-  if (!username.value || !password.value) {
-    showNotification("请输入用户名和密码", "error");
-    return;
-  }
-
-  try {
-    isLoading.value = true;
-    showNotification(`正在更新构建时间为 ${buildTime} 之前的设备...`, "info");
-
-    // 将buildTime转换为数值
-    const selectedBuildTime = parseInt(buildTime, 10);
-
-    // 调用后端的更新方法
-    const results = await backend.UpdateDevicesFile(
-      selectedFile.value,
-      selectedBuildTime
+      selectedDevices,
+      fileInput.files[0].name,
+      fileBinaryArray, // 已转换为普通数组
+      selectedMd5File.value,
+      md5BinaryArray, // 已转换为普通数组
+      username.value,
+      password.value
     );
 
     // 处理结果并显示
@@ -887,42 +852,6 @@ function processUpdateResults(results) {
     console.log("更新结果:", results);
   } else {
     showNotification("更新失败: 无法获取更新结果", "error");
-  }
-}
-
-// 批量更新所有设备
-async function updateAllDevices() {
-  if (!username.value || !password.value || !selectedFile.value) {
-    showNotification("请填写所有字段并选择文件", "warning");
-    return;
-  }
-
-  isLoading.value = true;
-  try {
-    // 使用新的后端方法
-    if (checkBackendFunction("UpdateDevicesFile")) {
-      // 调用UpdateDevicesFile，传入0表示更新所有设备
-      const results = await backend.UpdateDevicesFile(selectedFile.value, 0);
-      updateResults.value = results || [];
-      processUpdateResults(results);
-    } else if (checkBackendFunction("UpdateDevices")) {
-      // 如果新方法不可用，回退到旧方法
-      updateResults.value = await wailsBackend.UpdateDevices(
-        username.value,
-        password.value,
-        "", // 空字符串表示更新所有设备
-        selectedMd5File.value || ""
-      );
-      showNotification("所有设备的更新任务已提交", "success");
-    } else {
-      showNotification("更新功能暂时不可用，请联系开发人员", "warning");
-      return;
-    }
-  } catch (error) {
-    console.error("更新设备失败:", error);
-    showNotification(`更新设备失败: ${error}`, "error");
-  } finally {
-    isLoading.value = false;
   }
 }
 
@@ -1031,10 +960,10 @@ async function applyRegionToDevicesWithoutRegion() {
 async function saveDeviceList() {
   try {
     await wailsBackend.SaveDevices();
-    alert("设备列表保存成功");
+    showNotification("设备列表保存成功", "success");
   } catch (error) {
     console.error("保存设备列表失败:", error);
-    alert(`保存设备列表失败: ${error}`);
+    showNotification(`保存设备列表失败: ${error}`, "error");
   }
 }
 
@@ -1119,12 +1048,12 @@ async function setMd5File(filename: string) {
   const input = document.getElementById("md5-file-input") as HTMLInputElement;
 
   if (!filename) {
-    alert("请选择MD5文件");
+    showNotification("请选择MD5文件", "warning");
     return;
   }
 
   if (!filename.endsWith(".md5")) {
-    alert("请选择.md5格式的文件");
+    showNotification("请选择.md5格式的文件", "warning");
     input.value = "";
     return;
   }
@@ -1153,7 +1082,7 @@ async function setMd5File(filename: string) {
     }
   } catch (error) {
     console.error("设置MD5文件失败:", error);
-    alert(`设置MD5文件失败: ${error}`);
+    showNotification(`设置MD5文件失败: ${error}`, "error");
     selectedMd5File.value = "";
 
     // 更新文件状态UI
@@ -1229,8 +1158,13 @@ async function updateDevices() {
 
     // 调用后端的更新方法
     const results = await wailsBackend.UpdateDevicesFile(
+      selectedDevices,
       selectedFile.value,
-      0 // 更新所有选中的设备
+      [], // fileBinary - 从前端直接传空数组，后端将使用文件名查找文件
+      selectedMd5File.value || "",
+      [], // md5FileBinary - 从前端直接传空数组，后端将使用文件名查找文件
+      username.value,
+      password.value
     );
 
     // 处理结果
@@ -1543,19 +1477,7 @@ async function updateDevices() {
             已选择: {{ selectedFile }}
             <div id="file-status" class="file-status"></div>
           </div>
-          <div v-if="showFileHelp" class="file-help">
-            <p><strong>文件处理说明:</strong></p>
-            <p>系统将在以下位置查找您选择的文件:</p>
-            <ul>
-              <li>当前目录</li>
-              <li>您的主目录 (~/{{ selectedFile }})</li>
-              <li>您的下载文件夹 (~/Downloads/{{ selectedFile }})</li>
-            </ul>
-            <p>如果找到文件，将会自动复制到应用程序的临时目录中进行处理。</p>
-            <p>
-              如果您遇到"文件未找到"的错误，请确保文件位于上述位置之一，或重新选择文件。
-            </p>
-          </div>
+          <div v-if="showFileHelp" class="file-help"></div>
         </div>
 
         <!-- 新增：MD5文件上传选项 -->
@@ -1635,19 +1557,6 @@ async function updateDevices() {
                   </span>
                 </label>
                 <div class="group-actions">
-                  <button
-                    v-if="
-                      groupKey !== '未知版本' &&
-                      group.some((d) => d.status === 'online')
-                    "
-                    @click="updateByBuildTime(groupKey)"
-                    :disabled="
-                      isLoading || !username || !password || !selectedFile
-                    "
-                    class="update-group-button"
-                  >
-                    {{ isLoading ? "更新中..." : "更新此版本" }}
-                  </button>
                   <button
                     @click="groupExpanded[groupKey] = !groupExpanded[groupKey]"
                     class="group-toggle-button"

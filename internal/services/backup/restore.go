@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-
-	"application-updater/internal/models"
 )
 
 // RestoreResult represents the result of a restore operation
@@ -19,42 +17,19 @@ type RestoreResult struct {
 }
 
 // RestoreDevicesDB restores databases for multiple devices
-func (s *Service) RestoreDevicesDB(backupPoints map[string]string) ([]RestoreResult, error) {
+func (s *Service) RestoreDevicesDB(username, password, storageDir, areaDir string, selectIps []string) ([]RestoreResult, error) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
-	devices := s.deviceService.GetDevices()
-
 	var results []RestoreResult
-	for _, device := range devices {
-		if device.Status != "online" && device.Status != "offline-busy" {
-			results = append(results, RestoreResult{
-				Success:  false,
-				Message:  fmt.Sprintf("device offline: %s", device.Status),
-				DeviceIP: device.IP,
-				DeviceSN: device.IP, // Using IP as SN since we don't have that field
-			})
-			continue
-		}
+	for _, ip := range selectIps {
 
-		backupPoint, exists := backupPoints[device.IP] // Using IP as key
-		if !exists {
-			results = append(results, RestoreResult{
-				Success:  false,
-				Message:  "no backup point specified for this device",
-				DeviceIP: device.IP,
-				DeviceSN: device.IP, // Using IP as SN since we don't have that field
-			})
-			continue
-		}
-
-		result, err := s.RestoreDeviceDB(context.Background(), &device, backupPoint)
+		result, err := s.RestoreDeviceDB(context.Background(), ip, username, password, storageDir, areaDir)
 		if err != nil {
 			results = append(results, RestoreResult{
 				Success:  false,
 				Message:  err.Error(),
-				DeviceIP: device.IP,
-				DeviceSN: device.IP, // Using IP as SN since we don't have that field
+				DeviceIP: ip,
 			})
 			continue
 		}
@@ -65,7 +40,7 @@ func (s *Service) RestoreDevicesDB(backupPoints map[string]string) ([]RestoreRes
 }
 
 // RestoreDeviceDB restores database for a single device
-func (s *Service) RestoreDeviceDB(ctx context.Context, device *models.Device, backupPoint string) (*RestoreResult, error) {
+func (s *Service) RestoreDeviceDB(ctx context.Context, ip string, username, password string, storageDir, areaDir string) (*RestoreResult, error) {
 	// Get backup settings to determine the base path
 	settings, err := s.GetBackupSettings()
 	if err != nil {

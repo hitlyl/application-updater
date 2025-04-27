@@ -716,13 +716,13 @@ const restoreDevices = async () => {
     const api = safeBackend();
 
     // 获取选中的设备
-    const selectedDevices = devices.value
+    const selectIPs = devices.value
       .filter((device) => device.selected)
       .map((device) => device.ip);
     
-    console.log("选中的设备：", selectedDevices);
+    console.log("选中的设备：", selectIPs);
 
-    if (selectedDevices.length === 0) {
+    if (selectIPs.length === 0) {
       throw new Error("未选择任何设备");
     }
 
@@ -734,7 +734,7 @@ const restoreDevices = async () => {
     // 使用自定义确认对话框
     console.log("准备显示确认对话框");
     const confirmMessage = 
-      `确定要将 ${selectedDevices.length} 台设备恢复到各自的备份？\n` +
+      `确定要将 ${selectIPs.length} 台设备恢复到各自的备份？\n` +
       `备份位置格式: ${storageFolder.value}/${regionName.value}/{设备IP}/application-web.db\n` +
       `这将重启设备上的application-web服务。`;
     
@@ -755,7 +755,7 @@ const restoreDevices = async () => {
       password.value,
       storageFolder.value,
       regionName.value,
-      selectedDevices
+      selectIPs
     );
     
     console.log("恢复操作完成，结果：", results);
