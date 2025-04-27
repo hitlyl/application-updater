@@ -2425,7 +2425,7 @@ func (a *App) syncSingleDeviceTime(deviceIP, username, password, dateTimeString 
 	// 执行date命令设置系统时间
 	// 格式: date MMDDHHmmYYYY.ss
 	// 例如: date 010112002023.00 设置时间为 2023年1月1日12:00:00
-	dateCommand := fmt.Sprintf("date %s%s%s%s%s.%s",
+	dateCommand := fmt.Sprintf("date %s%s%s%s%s.%s && hwclock -w",
 		dateTimeString[4:6],   // 月
 		dateTimeString[6:8],   // 日
 		dateTimeString[8:10],  // 时
