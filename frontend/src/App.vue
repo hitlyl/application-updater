@@ -553,7 +553,7 @@ async function updateByBuildTime(buildTime: string) {
 <template>
   <div class="container">
     <div class="header">
-      <h1>设备更新管理 <span class="version">v1.1.5</span></h1>
+      <h1>设备更新管理 <span class="version">v1.1.6</span></h1>
     </div>
 
     <div class="tabs">
