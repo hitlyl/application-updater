@@ -235,12 +235,17 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, computed } from "vue";
+import { ref, computed, onMounted } from "vue";
 import * as XLSX from "xlsx";
+import * as backend from "../../wailsjs/wailsjs/go/main/App";
 
-// 导入Go后端绑定
-// 使用window.go.main.App作为临时解决方案
-const App = window.go?.main?.App;
+// @ts-nocheck
+
+// 定义后端API类型，避免TypeScript错误
+type BackendAPI = typeof backend;
+
+// 不再使用ref引用后端
+// const App = ref<BackendAPI | null>(null);
 
 // 定义类型
 interface SheetInfo {
@@ -252,7 +257,7 @@ interface ExcelRow {
   cameraName: string;
   cameraInfo: string;
   selected: boolean;
-  deviceIndex?: number; // 设备内索引，从1开始
+  deviceIndex: number; // 修改为非可选属性
 }
 
 interface ConfigResult {
@@ -274,6 +279,7 @@ const urlTemplate = ref<string>("rtsp://admin:123@<ip>/av/stream");
 const algorithmType = ref<number>(6); // 默认精准喷淋
 const isConfiguring = ref<boolean>(false);
 const configResults = ref<ConfigResult[]>([]);
+const devices = ref([]);
 
 // 选择状态相关计算属性
 const isAllSelected = computed<boolean>(() => {
@@ -485,7 +491,7 @@ const processSheetData = () => {
   for (const deviceIp in deviceGroups) {
     const deviceRows = deviceGroups[deviceIp];
     for (let i = 0; i < deviceRows.length; i++) {
-      if (deviceRows[i].deviceIndex!==0) {
+      if (deviceRows[i].deviceIndex !== 0) {
         deviceRows[i].deviceIndex = deviceRows[i].deviceIndex;
       } else {
         deviceRows[i].deviceIndex = i + 1; // 从1开始的索引
@@ -517,33 +523,40 @@ const startConfiguration = async () => {
     return;
   }
 
-  // 筛选出已选中的摄像头
-  const selectedRows = processedRows.value.filter((row) => row.selected);
+  // 筛选出已选中的摄像头并确保所有字段都有值
+  const selectedRows: ExcelRow[] = processedRows.value
+    .filter((row) => row.selected)
+    .map((row) => ({
+      ...row,
+      deviceIndex: row.deviceIndex || 0, // 确保deviceIndex总是有值
+    }));
 
   if (selectedRows.length === 0) {
     errorMessage.value = "请至少选择一个摄像头进行配置";
     return;
   }
 
-
   isConfiguring.value = true;
   errorMessage.value = "";
   configResults.value = [];
 
+  // 获取当前工作表名称作为区域名称
+  const regionName =
+    selectedSheetIndex.value !== null
+      ? sheets.value[selectedSheetIndex.value].name
+      : "";
+
   try {
-    // 调用Go后端方法配置摄像头
-    if (App && App.ConfigureCamerasFromData) {
-      const results = await App.ConfigureCamerasFromData(
-        selectedRows,
-        username.value,
-        password.value,
-        urlTemplate.value,
-        algorithmType.value
-      );
-      configResults.value = results;
-    } else {
-      throw new Error("后端方法未定义");
-    }
+    // 调用后端接口，传入工作表名称作为区域
+    const results = await backend.ProcessExcelData(
+      selectedRows,
+      username.value,
+      password.value,
+      urlTemplate.value,
+      algorithmType.value,
+      regionName
+    );
+    configResults.value = results;
   } catch (error) {
     errorMessage.value = `配置过程中发生错误: ${
       error instanceof Error ? error.message : String(error)
@@ -590,6 +603,27 @@ const isFirstCameraInDevice = (deviceIp: string, rowIndex: number) => {
   const prevRow = processedRows.value[rowIndex - 1];
   return prevRow.deviceIp !== deviceIp;
 };
+
+// 初始化应用
+onMounted(async () => {
+  try {
+    // 尝试使用导入的方式
+    if (typeof backend.GetDevices === "function") {
+      console.log("成功使用导入的方式初始化后端绑定");
+    }
+    // 备选：使用window.go
+    else if (window.go?.main?.App) {
+      console.log("成功使用window.go初始化后端绑定");
+    } else {
+      throw new Error("找不到Wails后端绑定");
+    }
+
+    // 初始化完成后加载数据
+    // 在这里添加其他初始化代码...
+  } catch (error) {
+    console.error("初始化应用失败:", error);
+  }
+});
 </script>
 
 <style scoped>

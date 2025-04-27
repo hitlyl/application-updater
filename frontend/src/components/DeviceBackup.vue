@@ -77,7 +77,7 @@
               placeholder="本地存储文件夹路径"
             />
             <button 
-              @click="selectStorageFolder" 
+              @click="selectBackupFolder" 
               class="browse-button"
               title="选择文件夹"
             >
@@ -170,7 +170,7 @@
 
         <div class="backup-actions">
           <button
-            @click="backupDevices"
+            @click="startBackup"
             class="config-button primary-button"
             :disabled="
               isProcessing ||
@@ -255,7 +255,7 @@
               placeholder="本地存储文件夹路径"
             />
             <button 
-              @click="selectStorageFolder" 
+              @click="selectBackupFolder" 
               class="browse-button"
               title="选择文件夹"
             >
@@ -404,10 +404,42 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, computed, onMounted } from "vue";
+import { ref, computed, onMounted, reactive } from "vue";
+import * as backend from "../../wailsjs/wailsjs/go/main/App";
 
-// 使用window.go.main.App作为临时解决方案
-const App = window.go?.main?.App;
+// 为window全局对象添加go属性类型声明
+declare global {
+  interface Window {
+    go?: {
+      main?: {
+        App?: any;
+      };
+    };
+  }
+}
+
+// 添加调试日志，以验证导入是否正确
+console.log("DeviceBackup: 导入的backend对象:", backend);
+console.log("DeviceBackup: 可用的backend函数:", Object.keys(backend));
+
+// 安全访问后端函数的辅助函数
+function safeBackend() {
+  // 首先尝试使用导入的backend
+  if (typeof backend !== 'undefined' && Object.keys(backend).length > 0) {
+    console.log("DeviceBackup: 使用导入的backend");
+    return backend;
+  }
+  
+  // 然后尝试使用window.go
+  if (typeof window !== 'undefined' && window.go && window.go.main && window.go.main.App) {
+    console.log("DeviceBackup: 使用window.go.main.App");
+    return window.go.main.App;
+  }
+  
+  // 如果两者都失败，则抛出错误
+  console.error("DeviceBackup: 无法访问后端API");
+  throw new Error("无法访问后端API，请刷新页面重试");
+}
 
 // 定义接口类型
 interface DeviceWithSelection {
@@ -451,11 +483,12 @@ interface ConfirmDialog {
 // 状态变量
 const activeSubTab = ref<string>("backup");
 const username = ref<string>("root");
-const password = ref<string>("ematech");
-const storageFolder = ref<string>("");
+const password = ref<string>("");
+const storageFolder = ref<string>("backups");
 const regionName = ref<string>("");
 const devices = ref<DeviceWithSelection[]>([]);
 const isProcessing = ref<boolean>(false);
+const loadingMessage = ref<string>("");
 const backupResults = ref<BackupResult[]>([]);
 const restoreResults = ref<RestoreResult[]>([]);
 const notification = ref<Notification>({
@@ -540,116 +573,127 @@ const showConfirmDialog = (title: string, message: string): Promise<boolean> => 
   });
 };
 
-// 选择存储文件夹
-const selectStorageFolder = async () => {
+// 选择备份保存文件夹
+async function selectBackupFolder() {
   try {
-    if (!App) {
-      console.error("后端App不可用");
-      return;
-    }
-    
-    // 保存当前值，以便取消时恢复
-    const currentValue = storageFolder.value;
-
-    const folderPath = await App.SelectFolder();
+    const api = safeBackend();
+    const folderPath = await api.SelectFolder();
     if (folderPath) {
       storageFolder.value = folderPath;
-      console.log("已选择存储文件夹:", folderPath);
+      showNotification("已选择文件夹: " + folderPath, "success");
     }
-  } catch (error: any) {
-    // 如果是取消操作，不显示错误
-    if (error.toString().includes("CANCELED")) {
-      console.log("用户取消了文件夹选择");
-      return;
-    }
-    
+  } catch (error) {
     console.error("选择文件夹失败:", error);
-    showNotification(`选择文件夹失败: ${error}`, 'error');
+    showNotification("选择文件夹失败: " + error, "error");
   }
-};
+}
 
 // 加载设备列表
-const loadDevices = async () => {
+async function loadDevices() {
   try {
-    if (!App) {
-      console.error("后端App不可用");
-      return;
-    }
-
-    const deviceList = await App.GetDevices();
-    devices.value = deviceList.map((device: any) => ({
-      ...device,
-      selected: device.status === "online",
+    setLoading("正在加载设备列表...", false, 0, false);
+    console.log("正在调用GetDevices()...");
+    
+    const api = safeBackend();
+    const deviceList = await api.GetDevices();
+    
+    console.log("获取到设备列表:", deviceList);
+    
+    // 转换为内部使用的设备类型
+    devices.value = deviceList.map((device) => ({
+      ip: device.ip || "",
+      buildTime: device.buildTime || "",
+      status: device.status || "",
+      selected: false
     }));
+    
+    updateSelectionState();
   } catch (error) {
     console.error("加载设备列表失败:", error);
+    showNotification("加载设备列表失败: " + error, "error");
+  } finally {
+    clearLoading();
   }
-};
+}
 
-// 备份设备
-const backupDevices = async () => {
+// 执行备份
+async function startBackup() {
+  if (!username.value || !password.value) {
+    showNotification("请输入用户名和密码", "warning");
+    return;
+  }
+  
+  const selectedIPs = devices.value
+    .filter((device) => device.selected)
+    .map((device) => device.ip);
+    
+  if (selectedIPs.length === 0) {
+    showNotification("请选择至少一个设备", "warning");
+    return;
+  }
+  
   try {
-    isProcessing.value = true;
+    setLoading("正在备份设备配置...", false, 0, false);
     backupResults.value = [];
-
-    if (!App) {
-      throw new Error("后端App不可用");
-    }
-
-    // 获取选中的设备
-    const selectedDevices = devices.value
-      .filter((device) => device.selected)
-      .map((device) => device.ip);
-
-    if (selectedDevices.length === 0) {
-      throw new Error("未选择任何设备");
-    }
     
-    // 使用自定义确认对话框
-    const confirmMessage = 
-      `确定要备份 ${selectedDevices.length} 台设备的数据库？\n` +
-      `备份将保存到: ${storageFolder.value}/${regionName.value}/{设备IP}/application-web.db`;
-      
-    const confirmed = await showConfirmDialog("确认备份操作", confirmMessage);
-    
-    if (!confirmed) {
-      isProcessing.value = false;
-      console.log("用户取消了备份操作");
-      return; // 静默退出
-    }
-
-    // 调用后端备份功能
-    const results = await App.BackupDevices(
+    const api = safeBackend();
+    // 使用旧API (username, password, storageFolder, regionName, deviceIPs)
+    // 从绑定来看，这是当前的API定义
+    const results = await api.BackupDevices(
       username.value,
       password.value,
       storageFolder.value,
       regionName.value,
-      selectedDevices
+      selectedIPs
     );
-
-    // 更新结果
+    
     backupResults.value = results;
     
-    // 显示成功通知
-    showNotification("数据备份操作已完成，请查看结果", 'success');
-  } catch (error: any) {
-    console.error("备份失败:", error);
-    // 显示错误信息
-    backupResults.value = [
-      {
-        ip: "系统错误",
-        success: false,
-        message: `备份过程出错: ${error}`,
-        backupPath: "",
-      },
-    ];
+    // 保存备份设置 - 使用旧API格式
+    await saveBackupSettings();
     
-    // 显示错误通知
-    showNotification(`备份过程出错: ${error}`, 'error');
+    // 显示结果摘要
+    const successCount = results.filter((r) => r.success).length;
+    showNotification(
+      `备份完成: 成功 ${successCount}，失败 ${
+        results.length - successCount
+      }`,
+      successCount === results.length ? "success" : "warning"
+    );
+  } catch (error) {
+    console.error("备份设备失败:", error);
+    showNotification("备份失败: " + error, "error");
   } finally {
-    isProcessing.value = false;
+    clearLoading();
   }
-};
+}
+
+// 加载备份设置
+async function loadBackupSettings() {
+  try {
+    setLoading("加载备份设置...", false, 0, false);
+    
+    const api = safeBackend();
+    const settings = await api.GetBackupSettings();
+    
+    storageFolder.value = settings.storageFolder || "backups";
+    regionName.value = settings.regionName || "";
+    username.value = settings.username || username.value;
+    password.value = settings.password || password.value;
+    
+    // 更新用户名和密码字段
+    if (username.value) {
+      username.value = username.value;
+    }
+    if (password.value) {
+      password.value = password.value;
+    }
+  } catch (error) {
+    console.error("加载备份设置失败:", error);
+  } finally {
+    clearLoading();
+  }
+}
 
 // 恢复设备
 const restoreDevices = async () => {
@@ -668,10 +712,8 @@ const restoreDevices = async () => {
     console.log("isProcessing 设置为 true");
     restoreResults.value = [];
 
-    if (!App) {
-      console.error("App对象不可用");
-      throw new Error("后端App不可用");
-    }
+    // 获取后端API
+    const api = safeBackend();
 
     // 获取选中的设备
     const selectedDevices = devices.value
@@ -708,7 +750,7 @@ const restoreDevices = async () => {
     console.log("用户确认了恢复操作，开始调用后端API");
 
     // 调用后端恢复功能
-    const results = await App.RestoreDevicesDB(
+    const results = await api.RestoreDevicesDB(
       username.value,
       password.value,
       storageFolder.value,
@@ -752,32 +794,80 @@ const restoreDevices = async () => {
   }
 };
 
-// 加载保存的备份设置
-const loadSavedBackupSettings = async () => {
-  try {
-    if (!App) {
-      console.error("后端App不可用");
-      return;
-    }
+// 设置加载状态
+function setLoading(message: string, isBackground = false, timeout = 0, disableCancel = false) {
+  isProcessing.value = true;
+  loadingMessage.value = message;
+}
 
-    const settings = await App.GetBackupSettings();
-    if (settings) {
-      storageFolder.value = settings.storageFolder || "";
-      regionName.value = settings.regionName || "";
-      username.value = settings.username || "root";
-      password.value = settings.password || "ematech";
-      console.log("已加载保存的备份设置");
-    }
+// 清除加载状态
+function clearLoading() {
+  isProcessing.value = false;
+  loadingMessage.value = "";
+}
+
+// 保存备份设置到后端
+async function saveBackupSettings() {
+  try {
+    const api = safeBackend();
+    // 使用旧API格式（多个参数）- 从绑定来看，这是当前的API定义
+    await api.SaveBackupSettings(
+      storageFolder.value,
+      regionName.value || "daily",
+      username.value,
+      password.value
+    );
+    console.log("备份设置已保存");
   } catch (error) {
-    console.error("加载备份设置失败:", error);
+    console.error("保存备份设置失败:", error);
   }
-};
+}
 
 // 组件挂载时加载设备列表和备份设置
-onMounted(() => {
-  loadDevices();
-  loadSavedBackupSettings();
+onMounted(async () => {
+  try {
+    console.log("DeviceBackup: 初始化中...");
+    // 获取后端API
+    const api = safeBackend();
+    console.log("DeviceBackup: 成功获取后端API");
+    
+    // 在这里添加初始化代码...
+    await loadDevices();
+    await loadBackupSettings();
+  } catch (error) {
+    console.error("初始化备份应用失败:", error);
+    showNotification("初始化失败: " + error, "error");
+  }
 });
+
+function restoreDevice(deviceIP, snapshotTimestamp) {
+  if (!deviceIP || !snapshotTimestamp) {
+    showNotification("设备IP和备份时间戳不能为空", "error");
+    return;
+  }
+
+  setLoading("正在恢复设备配置...", false, 0, false);
+  
+  try {
+    const api = safeBackend();
+    // 调用恢复单个设备的API
+    // 注意：这里假设后端有一个RestoreDeviceDB的API
+    api.RestoreDeviceDB(username.value, password.value, deviceIP, snapshotTimestamp)
+      .then(result => {
+        showNotification(`设备 ${deviceIP} 恢复成功`, "success");
+      })
+      .catch(error => {
+        showNotification(`设备 ${deviceIP} 恢复失败: ${error}`, "error");
+      })
+      .finally(() => {
+        clearLoading();
+      });
+  } catch (error) {
+    console.error("恢复设备失败:", error);
+    showNotification(`恢复设备失败: ${error}`, "error");
+    clearLoading();
+  }
+}
 </script>
 
 <style scoped>

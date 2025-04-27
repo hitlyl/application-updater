@@ -39,6 +39,38 @@ A desktop application for managing and updating multiple devices via HTTP.
 - Update devices by uploading files via HTTP
 - View update operation results for each device
 
+### Backup
+
+- Backup device configurations and databases
+- Configure backup settings and frequency
+- View backup history and status
+
+## Project Structure
+
+The project follows a modular architecture:
+
+```
+application-updater/
+├── cmd/
+│   └── app/           # Application entry point
+├── internal/
+│   ├── models/        # Data models
+│   │   └── device.go  # Device-related data structures
+│   ├── services/      # Business logic services
+│   │   ├── auth/      # Authentication service
+│   │   ├── backup/    # Backup service
+│   │   ├── device/    # Device management service
+│   │   │   ├── manager.go  # Device management
+│   │   │   ├── scanner.go  # Device scanning
+│   │   │   └── service.go  # Device service
+│   │   └── updater/   # Program update service
+│   └── utils/         # Utility functions
+│       ├── excel/     # Excel file handling
+│       └── ssh/       # SSH communication utilities
+├── frontend/          # Vue-TS frontend
+└── configs/           # Application configuration
+```
+
 ## Development
 
 ### Prerequisites
@@ -101,8 +133,12 @@ This will create a production-ready binary in the `build/bin` directory.
    - Select the update file to upload
    - Click "Update All Devices" to start the update process
    - View the results for each device
+3. **Backup Tab**:
+   - Configure backup settings
+   - Enable scheduled backups
+   - Perform manual backups
+   - View backup history
 
 ## License
 
 [MIT License](LICENSE)
-# application-updater
