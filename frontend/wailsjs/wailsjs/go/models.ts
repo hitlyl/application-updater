@@ -150,6 +150,22 @@ export namespace models {
 	        this.timestamp = source["timestamp"];
 	    }
 	}
+	export class UpdateResult {
+	    ip: string;
+	    success: boolean;
+	    message: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new UpdateResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ip = source["ip"];
+	        this.success = source["success"];
+	        this.message = source["message"];
+	    }
+	}
 
 }
 

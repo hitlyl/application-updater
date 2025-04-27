@@ -366,6 +366,26 @@ func (a *App) GetRegions() []string {
 
 }
 
+// UpdateDevicesFile uploads update files to devices with build time less than the selected build time
+func (a *App) UpdateDevicesFile(filePath string, selectedBuildTime int64) ([]models.UpdateResult, error) {
+	results, err := a.deviceService.UpdateDevicesFile(filePath, selectedBuildTime)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert device.UpdateResult to models.UpdateResult
+	modelResults := make([]models.UpdateResult, len(results))
+	for i, result := range results {
+		modelResults[i] = models.UpdateResult{
+			IP:      result.IP,
+			Success: result.Success,
+			Message: result.Message,
+		}
+	}
+
+	return modelResults, nil
+}
+
 // SetDevicesRegion sets the region for multiple devices
 func (a *App) SetDevicesRegion(deviceIDs []string, region string) error {
 	return a.deviceService.SetDevicesRegion(deviceIDs, region)

@@ -101,3 +101,7 @@ export function SetRegionFilter(arg1) {
 export function SyncDeviceTime(arg1, arg2, arg3) {
   return window['go']['main']['App']['SyncDeviceTime'](arg1, arg2, arg3);
 }
+
+export function UpdateDevicesFile(arg1, arg2) {
+  return window['go']['main']['App']['UpdateDevicesFile'](arg1, arg2);
+}

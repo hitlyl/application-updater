@@ -51,3 +51,5 @@ export function SetDevicesRegion(arg1:Array<string>,arg2:string):Promise<void>;
 export function SetRegionFilter(arg1:string):Promise<Array<models.Device>>;
 
 export function SyncDeviceTime(arg1:string,arg2:string,arg3:Array<string>):Promise<Array<models.TimeSyncResult>>;
+
+export function UpdateDevicesFile(arg1:string,arg2:number):Promise<Array<models.UpdateResult>>;

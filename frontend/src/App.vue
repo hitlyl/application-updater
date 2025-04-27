@@ -143,7 +143,11 @@ const showConfirmDialog = (
 // 计算属性：已选择的设备ID列表
 const selectedDevicesList = computed(() => {
   return Object.entries(selectedDevices.value)
-    .filter(([_, selected]) => selected)
+    .filter(([id, selected]) => {
+      if (!selected) return false;
+      const device = devices.value.find((d) => d.id === id);
+      return device && device.status === "online";
+    })
     .map(([id]) => id);
 });
 
@@ -239,6 +243,7 @@ function toggleGroup(groupKey: string, selected: boolean) {
   const newSelection = { ...selectedDevices.value };
 
   group.forEach((device) => {
+    // 只允许选择在线设备
     if (device.status === "online") {
       newSelection[device.id] = selected;
     }
@@ -249,21 +254,12 @@ function toggleGroup(groupKey: string, selected: boolean) {
 
 // 切换单个设备选择状态
 function toggleDeviceSelection(device: Device, buildTime: string) {
-  if (selectedDevices.value[device.id]) {
-    selectedDevices.value[device.id] = false;
-  } else {
-    selectedDevices.value[device.id] = true;
+  // 只允许切换在线设备的状态
+  if (device.status === "online") {
+    const newSelection = { ...selectedDevices.value };
+    newSelection[device.id] = !newSelection[device.id];
+    selectedDevices.value = newSelection;
   }
-
-  // 更新组的选择状态
-  const group = groupedDevices.value[buildTime];
-  // 检查组内是否所有设备都被选中
-  const groupDevices = group || [];
-  const onlineDevices = groupDevices.filter((d) => d.status === "online");
-  const allSelected = onlineDevices.every((d) => selectedDevices.value[d.id]);
-
-  // 在UI中标记组为"已全选"的逻辑应在模板中实现
-  // 这里不需要直接修改group对象
 }
 
 // 检查一个组是否全部选中
@@ -797,76 +793,100 @@ async function handleMd5FileSelect(event: Event) {
 
 // Update selected devices
 async function updateSelectedDevices() {
-  if (!username.value || !password.value || !selectedFile.value) {
-    showNotification("请填写所有字段并选择文件", "warning");
+  // 检查必要条件
+  if (!selectedFile.value) {
+    showNotification("请选择更新文件", "warning");
     return;
   }
 
-  if (selectedDevicesList.value.length === 0) {
-    showNotification("请至少选择一个设备进行更新", "warning");
+  if (!username.value || !password.value) {
+    showNotification("请输入用户名和密码", "warning");
     return;
   }
 
-  isLoading.value = true;
+  // 检查选中的设备
+  const selectedDevices = selectedDevicesList.value;
+  if (selectedDevices.length === 0) {
+    showNotification("请至少选择一个在线设备进行更新", "warning");
+    return;
+  }
+
   try {
-    // 获取第一个选择设备的buildTime作为要更新的buildTime组
-    const selectedBuildTime =
-      selectedBuildTimes.value.length > 0 ? selectedBuildTimes.value[0] : "";
+    isLoading.value = true;
+    showNotification("正在更新设备...", "info");
 
-    // 检查后端函数是否存在
-    if (typeof wailsBackend.UpdateDevices !== "function") {
-      showNotification("更新功能暂时不可用，请联系开发人员", "warning");
-      return;
-    }
-
-    // 调用实际的更新函数
-    updateResults.value = await wailsBackend.UpdateDevices(
-      username.value,
-      password.value,
-      selectedBuildTime,
-      selectedMd5File.value || ""
+    // 调用后端的更新方法
+    const results = await wailsBackend.UpdateDevicesFile(
+      selectedFile.value,
+      0 // 更新所有选中的设备
     );
 
-    showNotification("设备更新任务已提交", "success");
+    // 处理结果并显示
+    updateResults.value = results || [];
+    processUpdateResults(results);
   } catch (error) {
-    console.error("更新设备出错:", error);
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    showNotification(`更新失败: ${errorMessage}`, "error");
+    console.error("更新设备失败:", error);
+    showNotification(`更新失败: ${error}`, "error");
   } finally {
     isLoading.value = false;
   }
 }
 
-// 同样修改按buildTime进行批量更新的函数
-async function updateByBuildTime(buildTime: string) {
-  if (!username.value || !password.value || !selectedFile.value) {
-    showNotification("请填写所有字段并选择文件", "warning");
+// 根据BUILD_TIME更新设备
+async function updateByBuildTime(buildTime) {
+  if (!selectedFile.value) {
+    showNotification("请选择更新文件", "error");
     return;
   }
 
-  isLoading.value = true;
-  try {
-    // 检查后端函数是否存在
-    if (typeof wailsBackend.UpdateDevices !== "function") {
-      showNotification("更新功能暂时不可用，请联系开发人员", "warning");
-      return;
-    }
+  if (!username.value || !password.value) {
+    showNotification("请输入用户名和密码", "error");
+    return;
+  }
 
-    // 调用实际的更新函数
-    updateResults.value = await wailsBackend.UpdateDevices(
-      username.value,
-      password.value,
-      buildTime,
-      selectedMd5File.value || ""
+  try {
+    isLoading.value = true;
+    showNotification(`正在更新构建时间为 ${buildTime} 之前的设备...`, "info");
+
+    // 将buildTime转换为数值
+    const selectedBuildTime = parseInt(buildTime, 10);
+
+    // 调用后端的更新方法
+    const results = await backend.UpdateDevicesFile(
+      selectedFile.value,
+      selectedBuildTime
     );
 
-    showNotification(`版本 ${buildTime} 的设备更新任务已提交`, "success");
+    // 处理结果并显示
+    updateResults.value = results || [];
+    processUpdateResults(results);
   } catch (error) {
-    console.error(`更新构建时间为 ${buildTime} 的设备出错:`, error);
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    showNotification(`更新失败: ${errorMessage}`, "error");
+    console.error("更新设备失败:", error);
+    showNotification(`更新失败: ${error}`, "error");
   } finally {
     isLoading.value = false;
+  }
+}
+
+// 处理更新结果
+function processUpdateResults(results) {
+  if (results && Array.isArray(results)) {
+    const successCount = results.filter((r) => r.success).length;
+    const totalCount = results.length;
+
+    if (successCount === totalCount) {
+      showNotification(`成功更新 ${successCount} 台设备`, "success");
+    } else {
+      showNotification(
+        `更新完成: ${successCount}/${totalCount} 台设备成功`,
+        "warning"
+      );
+    }
+
+    // 显示详细结果
+    console.log("更新结果:", results);
+  } else {
+    showNotification("更新失败: 无法获取更新结果", "error");
   }
 }
 
@@ -879,22 +899,25 @@ async function updateAllDevices() {
 
   isLoading.value = true;
   try {
-    // 检查后端函数是否存在
-    if (typeof wailsBackend.UpdateDevices !== "function") {
+    // 使用新的后端方法
+    if (checkBackendFunction("UpdateDevicesFile")) {
+      // 调用UpdateDevicesFile，传入0表示更新所有设备
+      const results = await backend.UpdateDevicesFile(selectedFile.value, 0);
+      updateResults.value = results || [];
+      processUpdateResults(results);
+    } else if (checkBackendFunction("UpdateDevices")) {
+      // 如果新方法不可用，回退到旧方法
+      updateResults.value = await wailsBackend.UpdateDevices(
+        username.value,
+        password.value,
+        "", // 空字符串表示更新所有设备
+        selectedMd5File.value || ""
+      );
+      showNotification("所有设备的更新任务已提交", "success");
+    } else {
       showNotification("更新功能暂时不可用，请联系开发人员", "warning");
-      isLoading.value = false;
       return;
     }
-
-    // 调用实际的更新函数
-    updateResults.value = await wailsBackend.UpdateDevices(
-      username.value,
-      password.value,
-      "", // 空字符串表示更新所有设备
-      selectedMd5File.value || ""
-    );
-
-    showNotification("所有设备的更新任务已提交", "success");
   } catch (error) {
     console.error("更新设备失败:", error);
     showNotification(`更新设备失败: ${error}`, "error");
@@ -1068,11 +1091,14 @@ async function clearDeviceList() {
 function updateDeviceSelection() {
   const newSelection: Record<string, boolean> = {};
   devices.value.forEach((device) => {
-    // 保留已有的选择状态，或者根据selectAll设置新设备的选择状态
-    newSelection[device.id] =
-      selectedDevices.value[device.id] !== undefined
-        ? selectedDevices.value[device.id]
-        : selectAll.value;
+    // 只为在线设备设置选择状态
+    if (device.status === "online") {
+      // 保留已有的选择状态，或者根据selectAll设置新设备的选择状态
+      newSelection[device.id] =
+        selectedDevices.value[device.id] !== undefined
+          ? selectedDevices.value[device.id]
+          : selectAll.value;
+    }
   });
   selectedDevices.value = newSelection;
 }
@@ -1080,9 +1106,13 @@ function updateDeviceSelection() {
 // 切换全选/全不选
 function toggleSelectAll() {
   selectAll.value = !selectAll.value;
+  const newSelection = { ...selectedDevices.value };
   devices.value.forEach((device) => {
-    selectedDevices.value[device.id] = selectAll.value;
+    if (device.status === "online") {
+      newSelection[device.id] = selectAll.value;
+    }
   });
+  selectedDevices.value = newSelection;
 }
 
 async function setMd5File(filename: string) {
@@ -1169,11 +1199,50 @@ watch(activeTab, (newValue, oldValue) => {
     console.log("切换到软件更新标签页，检查更新功能");
 
     // 检查后端更新功能是否可用
-    if (!checkBackendFunction("UpdateDevices")) {
+    if (!checkBackendFunction("UpdateDevicesFile")) {
       showNotification("软件更新功能暂不可用，请联系开发人员", "warning");
     }
   }
 });
+
+// 实现设备更新功能
+async function updateDevices() {
+  if (!selectedFile.value) {
+    showNotification("请选择更新文件", "warning");
+    return;
+  }
+
+  if (!username.value || !password.value) {
+    showNotification("请输入用户名和密码", "warning");
+    return;
+  }
+
+  const selectedDevices = selectedDevicesList.value;
+  if (selectedDevices.length === 0) {
+    showNotification("请至少选择一个在线设备进行更新", "warning");
+    return;
+  }
+
+  try {
+    isLoading.value = true;
+    showNotification("正在更新设备...", "info");
+
+    // 调用后端的更新方法
+    const results = await wailsBackend.UpdateDevicesFile(
+      selectedFile.value,
+      0 // 更新所有选中的设备
+    );
+
+    // 处理结果
+    updateResults.value = results || [];
+    processUpdateResults(results);
+  } catch (error) {
+    console.error("更新设备失败:", error);
+    showNotification(`更新失败: ${error}`, "error");
+  } finally {
+    isLoading.value = false;
+  }
+}
 </script>
 
 <template>
@@ -1667,7 +1736,9 @@ watch(activeTab, (newValue, oldValue) => {
           class="primary-button"
         >
           {{
-            isLoading ? "更新中..." : `更新选中的设备 (${selectedDevicesCount})`
+            isLoading
+              ? "更新中..."
+              : `更新选中的设备 (${selectedDevicesList.length})`
           }}
         </button>
       </div>

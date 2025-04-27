@@ -1,14 +1,18 @@
 package device
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"sync"
 	"time"
 
@@ -768,4 +772,193 @@ func (s *Service) GetRegions() ([]string, error) {
 	}
 
 	return regions, nil
+}
+
+// UpdateDevicesFile 上传更新文件到设备
+func (s *Service) UpdateDevicesFile(filePath string, selectedBuildTime int64) ([]models.UpdateResult, error) {
+	// 检查文件是否存在
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		return nil, fmt.Errorf("文件不存在: %s", filePath)
+	}
+
+	// 检查MD5文件是否存在
+	md5Path := filePath + ".md5"
+	if _, err := os.Stat(md5Path); os.IsNotExist(err) {
+		return nil, fmt.Errorf("MD5文件不存在: %s", md5Path)
+	}
+
+	// 获取所有在线设备
+	s.mutex.RLock()
+	devices := make([]models.Device, 0)
+	for _, device := range s.filteredDevices {
+		// 跳过离线设备
+		if device.Status != "online" {
+			continue
+		}
+
+		// 如果指定了 BuildTime 则过滤设备
+		if selectedBuildTime > 0 {
+			// 转换 BuildTime 字符串为 int64 进行比较
+			deviceBuildTime, err := strconv.ParseInt(device.BuildTime, 10, 64)
+			if err == nil && deviceBuildTime < selectedBuildTime {
+				devices = append(devices, device)
+			}
+		} else if selectedBuildTime <= 0 {
+			// 如果没有指定 BuildTime，则添加所有在线设备
+			devices = append(devices, device)
+		}
+	}
+	s.mutex.RUnlock()
+
+	if len(devices) == 0 {
+		return nil, fmt.Errorf("没有需要更新的设备")
+	}
+
+	results := make([]models.UpdateResult, 0, len(devices))
+	resultChan := make(chan models.UpdateResult, len(devices))
+
+	// 限制并发数量为8
+	maxConcurrent := 8
+	semaphore := make(chan struct{}, maxConcurrent)
+	var wg sync.WaitGroup
+
+	// 为每个设备启动一个goroutine执行更新
+	for _, device := range devices {
+		wg.Add(1)
+		go func(device models.Device) {
+			defer wg.Done()
+
+			// 占用信号量
+			semaphore <- struct{}{}
+			defer func() {
+				// 释放信号量
+				<-semaphore
+			}()
+
+			result, err := s.uploadUpdateFile(device.IP, filePath)
+			if err != nil {
+				resultChan <- models.UpdateResult{
+					IP:      device.IP,
+					Success: false,
+					Message: err.Error(),
+				}
+				return
+			}
+			resultChan <- result
+		}(device)
+	}
+
+	// 等待所有更新完成
+	go func() {
+		wg.Wait()
+		close(resultChan)
+	}()
+
+	// 收集结果
+	for result := range resultChan {
+		results = append(results, result)
+	}
+
+	return results, nil
+}
+
+// uploadUpdateFile 上传更新文件到单个设备
+func (s *Service) uploadUpdateFile(ip string, filePath string) (models.UpdateResult, error) {
+	result := models.UpdateResult{
+		IP:      ip,
+		Success: false,
+		Message: "",
+	}
+
+	// 打开文件
+	file, err := os.Open(filePath)
+	if err != nil {
+		return result, fmt.Errorf("无法打开文件: %w", err)
+	}
+	defer file.Close()
+
+	// 打开MD5文件
+	md5File, err := os.Open(filePath + ".md5")
+	if err != nil {
+		return result, fmt.Errorf("无法打开MD5文件: %w", err)
+	}
+	defer md5File.Close()
+
+	// 获取文件名
+	fileName := filepath.Base(filePath)
+
+	// 创建multipart表单
+	var requestBody bytes.Buffer
+	writer := multipart.NewWriter(&requestBody)
+
+	// 添加file字段
+	fileWriter, err := writer.CreateFormFile("file", fileName)
+	if err != nil {
+		return result, fmt.Errorf("创建表单文件字段失败: %w", err)
+	}
+	_, err = io.Copy(fileWriter, file)
+	if err != nil {
+		return result, fmt.Errorf("复制文件到表单失败: %w", err)
+	}
+
+	// 添加md5字段
+	md5Writer, err := writer.CreateFormFile("md5file", fileName+".md5")
+	if err != nil {
+		return result, fmt.Errorf("创建MD5表单字段失败: %w", err)
+	}
+	_, err = io.Copy(md5Writer, md5File)
+	if err != nil {
+		return result, fmt.Errorf("复制MD5文件到表单失败: %w", err)
+	}
+
+	// 关闭writer
+	err = writer.Close()
+	if err != nil {
+		return result, fmt.Errorf("关闭表单writer失败: %w", err)
+	}
+
+	// 创建请求
+	url := fmt.Sprintf("http://%s:8080/api/update", ip)
+	req, err := http.NewRequest("POST", url, &requestBody)
+	if err != nil {
+		return result, fmt.Errorf("创建请求失败: %w", err)
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	// 发送请求
+	client := &http.Client{
+		Timeout: 5 * time.Minute, // 设置较长的超时时间
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return result, fmt.Errorf("发送请求失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// 读取响应
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return result, fmt.Errorf("读取响应失败: %w", err)
+	}
+
+	// 检查响应状态
+	if resp.StatusCode != http.StatusOK {
+		return result, fmt.Errorf("更新失败，状态码: %d, 响应: %s", resp.StatusCode, string(respBody))
+	}
+
+	// 尝试解析JSON响应
+	var jsonResp struct {
+		Status  int    `json:"status"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(respBody, &jsonResp); err == nil {
+		if jsonResp.Status != 0 {
+			return result, fmt.Errorf("更新失败: %s", jsonResp.Message)
+		}
+	}
+
+	// 更新成功
+	result.Success = true
+	result.Message = "更新成功"
+	return result, nil
 }
