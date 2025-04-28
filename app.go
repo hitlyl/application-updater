@@ -84,6 +84,10 @@ func NewApp() *App {
 	}
 }
 
+func (a *App) SelectFolder() (string, error) {
+	return utils.SelectFolder(a.ctx)
+}
+
 // DomReady is called when the DOM is fully loaded
 func (a *App) DomReady(ctx context.Context) {
 	a.ctx = ctx
@@ -278,17 +282,19 @@ func (a *App) BackupDevices(username, password string, storageDir, areaDir strin
 	settings, err := a.backupService.GetBackupSettings()
 	if err != nil {
 		fmt.Printf("Warning: Failed to get backup settings: %v, using defaults\n", err)
-		settings = &backup.BackupSettings{
-			BackupPath:    "backups",
-			BackupEnabled: true,
+		settings = &models.BackupSettings{
+			BackupPath: "backups",
+			AreaPath:   "area1",
+			Username:   "root",
+			Password:   "ematech",
 		}
 	}
 	settings.BackupPath = storageDir
-	settings.BackupFreq = areaDir
+	settings.AreaPath = areaDir
 	a.backupService.SaveBackupSettings(settings)
 
 	// 执行备份
-	results, err := a.backupService.BackupDevices( settings, username, password,selectIps)
+	results, err := a.backupService.BackupDevices(settings, username, password, selectIps)
 	if err != nil {
 		fmt.Printf("Error performing backup: %v\n", err)
 		return []models.BackupResult{}
@@ -298,10 +304,9 @@ func (a *App) BackupDevices(username, password string, storageDir, areaDir strin
 	modelResults := make([]models.BackupResult, len(results))
 	for i, result := range results {
 		modelResults[i] = models.BackupResult{
-			IP:         result.DeviceIP,
-			Success:    result.Success,
-			Message:    result.Message,
-			BackupPath: result.BackupTimestamp,
+			IP:      result.IP,
+			Success: result.Success,
+			Message: result.Message,
 		}
 	}
 
@@ -325,33 +330,19 @@ func (a *App) GetBackupSettings() models.BackupSettings {
 	if err != nil {
 		fmt.Printf("Warning: Failed to get backup settings: %v, using defaults\n", err)
 		return models.BackupSettings{
-			StorageFolder: "backups",
-			RegionName:    "",
-			Username:      "",
-			Password:      "",
+			BackupPath: "backups",
+			AreaPath:   "",
+			Username:   "",
+			Password:   "",
 		}
 	}
-
-	// 转换为前端所需的格式
-	return models.BackupSettings{
-		StorageFolder: settings.BackupPath,
-		RegionName:    settings.BackupFreq,
-		Username:      "",
-		Password:      "",
-	}
+	return *settings
 }
 
 // SaveBackupSettings saves backup settings
 func (a *App) SaveBackupSettings(settings models.BackupSettings) error {
-	// 转换为服务所需的格式
-	serviceSettings := &backup.BackupSettings{
-		BackupPath:    settings.StorageFolder,
-		BackupFreq:    settings.RegionName,
-		BackupEnabled: true,
-	}
-
 	// 调用服务保存设置
-	return a.backupService.SaveBackupSettings(serviceSettings)
+	return a.backupService.SaveBackupSettings(&settings)
 }
 
 // GetRegions returns all device regions

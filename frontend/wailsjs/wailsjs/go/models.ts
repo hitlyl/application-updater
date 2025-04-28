@@ -19,8 +19,8 @@ export namespace models {
 	    }
 	}
 	export class BackupSettings {
-	    storageFolder: string;
-	    regionName: string;
+	    backupPath: string;
+	    areaPath: string;
 	    username: string;
 	    password: string;
 	
@@ -30,8 +30,8 @@ export namespace models {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.storageFolder = source["storageFolder"];
-	        this.regionName = source["regionName"];
+	        this.backupPath = source["backupPath"];
+	        this.areaPath = source["areaPath"];
 	        this.username = source["username"];
 	        this.password = source["password"];
 	    }

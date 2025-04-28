@@ -10,10 +10,10 @@ type BackupResult struct {
 
 // BackupSettings stores persistent settings for device backup
 type BackupSettings struct {
-	StorageFolder string `json:"storageFolder"`
-	RegionName    string `json:"regionName"`
-	Username      string `json:"username"`
-	Password      string `json:"password"`
+	BackupPath string `json:"backupPath"`
+	AreaPath   string `json:"areaPath"`
+	Username   string `json:"username"`
+	Password   string `json:"password"`
 }
 
 // RestoreResult represents the result of a device database restoration operation

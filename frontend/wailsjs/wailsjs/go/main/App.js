@@ -66,8 +66,8 @@ export function RemoveDevice(arg1) {
   return window['go']['main']['App']['RemoveDevice'](arg1);
 }
 
-export function RestoreDevicesDB(arg1, arg2, arg3, arg4) {
-  return window['go']['main']['App']['RestoreDevicesDB'](arg1, arg2, arg3, arg4);
+export function RestoreDevicesDB(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['RestoreDevicesDB'](arg1, arg2, arg3, arg4, arg5);
 }
 
 export function SaveBackupSettings(arg1) {
@@ -80,6 +80,10 @@ export function SaveExcelData(arg1) {
 
 export function ScanIPRange(arg1, arg2) {
   return window['go']['main']['App']['ScanIPRange'](arg1, arg2);
+}
+
+export function SelectFolder() {
+  return window['go']['main']['App']['SelectFolder']();
 }
 
 export function SetCameraIndex(arg1, arg2, arg3, arg4, arg5) {

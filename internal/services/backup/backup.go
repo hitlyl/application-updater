@@ -1,17 +1,16 @@
 package backup
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
 
+	"application-updater/internal/models"
 	"application-updater/internal/services/device"
 
 	"golang.org/x/crypto/ssh"
@@ -30,25 +29,8 @@ func NewService(deviceService *device.Service) *Service {
 	}
 }
 
-// BackupResult represents the result of a backup operation
-type BackupResult struct {
-	Success         bool   `json:"success"`
-	Message         string `json:"message"`
-	BackupTimestamp string `json:"backupTimestamp"`
-	DeviceIP        string `json:"deviceIP"`
-	DeviceSN        string `json:"deviceSN,omitempty"`
-}
-
-// BackupSettings represents the settings for backup operations
-type BackupSettings struct {
-	BackupPath     string `json:"backupPath"`
-	BackupFreq     string `json:"backupFreq"`
-	BackupEnabled  bool   `json:"backupEnabled"`
-	LastBackupTime int64  `json:"lastBackupTime"`
-}
-
 // BackupDevices backs up all device configurations and databases
-func (s *Service) BackupDevices(backupSettings *BackupSettings, username string, password string, selectIps []string) ([]BackupResult, error) {
+func (s *Service) BackupDevices(backupSettings *models.BackupSettings, username string, password string, selectIps []string) ([]models.BackupResult, error) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -60,23 +42,23 @@ func (s *Service) BackupDevices(backupSettings *BackupSettings, username string,
 		password = "admin" // Default password
 	}
 
-	var results []BackupResult
+	var results []models.BackupResult
 	for _, ip := range selectIps {
 
-		result, err := s.backupSingleDevice(context.Background(), ip, backupSettings.BackupPath, username, password)
+		result, err := s.backupSingleDevice(context.Background(), ip, filepath.Join(backupSettings.BackupPath, backupSettings.AreaPath, ip), username, password)
 		if err != nil {
-			results = append(results, BackupResult{
-				Success:  false,
-				Message:  err.Error(),
-				DeviceIP: ip,
+			results = append(results, models.BackupResult{
+				Success: false,
+				Message: err.Error(),
+				IP:      ip,
 			})
 			continue
 		}
 		results = append(results, *result)
 	}
+	backupSettings.Username = username
+	backupSettings.Password = password
 
-	// Update last backup time
-	backupSettings.LastBackupTime = time.Now().Unix()
 	if err := s.SaveBackupSettings(backupSettings); err != nil {
 		fmt.Printf("Warning: Failed to update backup settings after backup: %v\n", err)
 	}
@@ -85,7 +67,7 @@ func (s *Service) BackupDevices(backupSettings *BackupSettings, username string,
 }
 
 // backupSingleDevice backs up a single device configuration and database
-func (s *Service) backupSingleDevice(ctx context.Context, ip string, backupPath string, username string, password string) (*BackupResult, error) {
+func (s *Service) backupSingleDevice(ctx context.Context, ip string, backupPath string, username string, password string) (*models.BackupResult, error) {
 	if backupPath == "" {
 		return nil, fmt.Errorf("backup path is empty")
 	}
@@ -94,27 +76,6 @@ func (s *Service) backupSingleDevice(ctx context.Context, ip string, backupPath 
 	err := os.MkdirAll(backupPath, 0755)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create backup directory: %w", err)
-	}
-
-	// Setup device-specific backup directory
-	deviceDir := filepath.Join(backupPath, ip) // Using IP as device identifier
-	err = os.MkdirAll(deviceDir, 0755)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create device backup directory: %w", err)
-	}
-
-	// Create backup timestamp
-	timestamp := time.Now().Format("20060102150405")
-	backupDir := filepath.Join(deviceDir, timestamp)
-	err = os.MkdirAll(backupDir, 0755)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create timestamp backup directory: %w", err)
-	}
-
-	// Try to obtain authentication token - just to verify credentials
-	_, err = s.deviceService.LoginToDevice(ip, username, password)
-	if err != nil {
-		return nil, fmt.Errorf("failed to login to device: %w", err)
 	}
 
 	// Setup SSH client configuration
@@ -146,7 +107,7 @@ func (s *Service) backupSingleDevice(ctx context.Context, ip string, backupPath 
 
 	// 2. Copy the database file to a temporary location
 	dbFilePath := "/var/lib/application-web/db/application-web.db"
-	localDbPath := filepath.Join(backupDir, "application-web.db")
+	localDbPath := filepath.Join(backupPath, "application-web.db")
 
 	// Create an SCP session to copy the file
 	fmt.Printf("Downloading database from %s...\n", ip)
@@ -163,36 +124,17 @@ func (s *Service) backupSingleDevice(ctx context.Context, ip string, backupPath 
 	if err != nil {
 		return nil, fmt.Errorf("failed to restart application service: %w", err)
 	}
+	fmt.Printf("Backup completed successfully for %s\n", ip)
 
-	// 4. Create a metadata file with information about the backup
-	metadataPath := filepath.Join(backupDir, "metadata.json")
-	metadata := map[string]interface{}{
-		"timestamp":   timestamp,
-		"device_ip":   ip,
-		"backup_type": "database",
-	}
-
-	metadataBytes, err := json.Marshal(metadata)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create backup metadata: %w", err)
-	}
-
-	if err := os.WriteFile(metadataPath, metadataBytes, 0644); err != nil {
-		return nil, fmt.Errorf("failed to write backup metadata: %w", err)
-	}
-
-	return &BackupResult{
-		Success:         true,
-		Message:         "Backup completed successfully",
-		BackupTimestamp: timestamp,
-		DeviceIP:        ip,
+	return &models.BackupResult{
+		Success: true,
+		Message: "Backup completed successfully, please check the backup directory "+backupPath,
+		IP:      ip,
 	}, nil
 }
 
 // SaveBackupSettings saves backup settings to a file
-func (s *Service) SaveBackupSettings(settings *BackupSettings) error {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
+func (s *Service) SaveBackupSettings(settings *models.BackupSettings) error {
 
 	data, err := json.Marshal(settings)
 	if err != nil {
@@ -214,7 +156,7 @@ func (s *Service) SaveBackupSettings(settings *BackupSettings) error {
 }
 
 // GetBackupSettings retrieves backup settings from a file
-func (s *Service) GetBackupSettings() (*BackupSettings, error) {
+func (s *Service) GetBackupSettings() (*models.BackupSettings, error) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -224,10 +166,11 @@ func (s *Service) GetBackupSettings() (*BackupSettings, error) {
 	_, err := os.Stat(settingsPath)
 	if os.IsNotExist(err) {
 		// Default settings if file doesn't exist
-		defaultSettings := &BackupSettings{
-			BackupPath:    filepath.Join("backups"),
-			BackupFreq:    "daily",
-			BackupEnabled: false,
+		defaultSettings := &models.BackupSettings{
+			BackupPath: filepath.Join("backups"),
+			AreaPath:   "area1",
+			Username:   "root",
+			Password:   "ematech",
 		}
 		fmt.Printf("DEBUG: Using default backup settings, file %s not found\n", settingsPath)
 		return defaultSettings, nil
@@ -238,7 +181,7 @@ func (s *Service) GetBackupSettings() (*BackupSettings, error) {
 		return nil, fmt.Errorf("failed to read backup settings: %w", err)
 	}
 
-	var settings BackupSettings
+	var settings models.BackupSettings
 	if err := json.Unmarshal(data, &settings); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal backup settings: %w", err)
 	}

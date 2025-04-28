@@ -6,6 +6,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -94,6 +96,7 @@ func scpFileToRemote(client *ssh.Client, localFilePath, remoteFilePath string) e
 	if err != nil {
 		return fmt.Errorf("failed to stat local file: %w", err)
 	}
+	fileSize := fileInfo.Size()
 
 	// Create a new SSH session
 	session, err := client.NewSession()
@@ -112,24 +115,44 @@ func scpFileToRemote(client *ssh.Client, localFilePath, remoteFilePath string) e
 		return fmt.Errorf("failed to get stdin pipe: %w", err)
 	}
 
+	// Escape remote path for shell
+	escapedDir := escapeShellArg(filepath.Dir(remoteFilePath))
+	escapedPath := escapeShellArg(remoteFilePath)
+
 	// Make sure remote directory exists
-	remoteDir := filepath.Dir(remoteFilePath)
-	mkdirCmd := fmt.Sprintf("mkdir -p %s", remoteDir)
+	mkdirCmd := fmt.Sprintf("mkdir -p %s", escapedDir)
 	err = executeSSHCommand(client, mkdirCmd)
 	if err != nil {
 		return fmt.Errorf("failed to create remote directory: %w", err)
 	}
 
-	// Start scp on the remote side
-	err = session.Start(fmt.Sprintf("cat > %s", remoteFilePath))
+	// Start file transfer on the remote side with dd to handle binary data better
+	err = session.Start(fmt.Sprintf("dd of=%s bs=32k", escapedPath))
 	if err != nil {
 		return fmt.Errorf("failed to start remote command: %w", err)
 	}
 
-	// Copy file content to remote
-	_, err = io.Copy(stdin, localFile)
+	// Copy file content to remote with progress tracking
+	written, err := io.Copy(stdin, localFile)
 	if err != nil {
+		// Try to remove incomplete file
+		cleanupSession, _ := client.NewSession()
+		if cleanupSession != nil {
+			defer cleanupSession.Close()
+			cleanupSession.Run(fmt.Sprintf("rm -f %s", escapedPath))
+		}
 		return fmt.Errorf("failed to copy file data: %w", err)
+	}
+
+	// Check if we wrote the entire file
+	if written != fileSize {
+		// Try to remove incomplete file
+		cleanupSession, _ := client.NewSession()
+		if cleanupSession != nil {
+			defer cleanupSession.Close()
+			cleanupSession.Run(fmt.Sprintf("rm -f %s", escapedPath))
+		}
+		return fmt.Errorf("incomplete file transfer: wrote %d bytes out of %d", written, fileSize)
 	}
 
 	// Close stdin to signal end of file transfer
@@ -145,11 +168,41 @@ func scpFileToRemote(client *ssh.Client, localFilePath, remoteFilePath string) e
 	}
 
 	// Set file permissions
-	chmod := fmt.Sprintf("chmod %o %s", fileInfo.Mode().Perm(), remoteFilePath)
+	chmod := fmt.Sprintf("chmod %o %s", fileInfo.Mode().Perm(), escapedPath)
 	err = executeSSHCommand(client, chmod)
 	if err != nil {
 		return fmt.Errorf("failed to set file permissions: %w", err)
 	}
 
+	// Verify file size
+	verifyCmd := fmt.Sprintf("stat -c %%s %s", escapedPath)
+	verifySession, err := client.NewSession()
+	if err != nil {
+		return fmt.Errorf("failed to create verification session: %w", err)
+	}
+	defer verifySession.Close()
+
+	var sizeOutput bytes.Buffer
+	verifySession.Stdout = &sizeOutput
+
+	if err := verifySession.Run(verifyCmd); err != nil {
+		return fmt.Errorf("failed to verify file size: %w", err)
+	}
+
+	remoteSizeStr := strings.TrimSpace(sizeOutput.String())
+	remoteSize, err := strconv.ParseInt(remoteSizeStr, 10, 64)
+	if err != nil {
+		return fmt.Errorf("failed to parse remote file size: %w", err)
+	}
+
+	if remoteSize != fileSize {
+		return fmt.Errorf("file size mismatch: expected %d bytes, got %d bytes", fileSize, remoteSize)
+	}
+
 	return nil
+}
+
+// Helper function to escape shell arguments
+func escapeShellArg(arg string) string {
+	return "'" + strings.Replace(arg, "'", "'\\''", -1) + "'"
 }

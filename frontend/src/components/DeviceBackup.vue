@@ -675,11 +675,25 @@ async function loadBackupSettings() {
     
     const api = safeBackend();
     const settings = await api.GetBackupSettings();
+    console.log("加载备份设置:", settings);
     
-    storageFolder.value = settings.storageFolder || "backups";
-    regionName.value = settings.regionName || "";
+    storageFolder.value = settings.backupPath || "backups";
     username.value = settings.username || username.value;
     password.value = settings.password || password.value;
+    
+    // 获取当前区域，如果存在则优先使用
+    try {
+      const currentRegion = await api.GetCurrentRegion();
+      console.log("获取当前区域:", currentRegion);
+      if (currentRegion && currentRegion.trim() !== "") {
+        regionName.value = currentRegion;
+      } else {
+        regionName.value = settings.areaPath || "";
+      }
+    } catch (regionError) {
+      console.error("获取当前区域失败:", regionError);
+      regionName.value = settings.areaPath || "";
+    }
     
     // 更新用户名和密码字段
     if (username.value) {
@@ -811,12 +825,12 @@ async function saveBackupSettings() {
   try {
     const api = safeBackend();
     // 使用旧API格式（多个参数）- 从绑定来看，这是当前的API定义
-    await api.SaveBackupSettings(
-      storageFolder.value,
-      regionName.value || "daily",
-      username.value,
-      password.value
-    );
+    await api.SaveBackupSettings({
+      BackupPath: storageFolder.value,
+      AreaPath: regionName.value || "area1",
+      Username: username.value,
+      Password: password.value
+    });
     console.log("备份设置已保存");
   } catch (error) {
     console.error("保存备份设置失败:", error);

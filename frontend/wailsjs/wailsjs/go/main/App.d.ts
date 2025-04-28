@@ -34,13 +34,15 @@ export function RefreshDevices():Promise<Array<models.Device>>;
 
 export function RemoveDevice(arg1:string):Promise<void>;
 
-export function RestoreDevicesDB(arg1:Array<string>,arg2:string,arg3:string,arg4:string):Promise<Array<models.RestoreResult>>;
+export function RestoreDevicesDB(arg1:string,arg2:string,arg3:string,arg4:string,arg5:Array<string>):Promise<Array<models.RestoreResult>>;
 
 export function SaveBackupSettings(arg1:models.BackupSettings):Promise<void>;
 
 export function SaveExcelData(arg1:string):Promise<string>;
 
 export function ScanIPRange(arg1:string,arg2:string):Promise<Array<models.Device>>;
+
+export function SelectFolder():Promise<string>;
 
 export function SetCameraIndex(arg1:string,arg2:string,arg3:string,arg4:string,arg5:number):Promise<boolean|string>;
 

@@ -956,17 +956,6 @@ async function applyRegionToDevicesWithoutRegion() {
   }
 }
 
-// 保存设备列表
-async function saveDeviceList() {
-  try {
-    await wailsBackend.SaveDevices();
-    showNotification("设备列表保存成功", "success");
-  } catch (error) {
-    console.error("保存设备列表失败:", error);
-    showNotification(`保存设备列表失败: ${error}`, "error");
-  }
-}
-
 // 清空设备列表
 async function clearDeviceList() {
   // 准备确认消息，根据是否有区域选择来调整
@@ -1133,50 +1122,6 @@ watch(activeTab, (newValue, oldValue) => {
     }
   }
 });
-
-// 实现设备更新功能
-async function updateDevices() {
-  if (!selectedFile.value) {
-    showNotification("请选择更新文件", "warning");
-    return;
-  }
-
-  if (!username.value || !password.value) {
-    showNotification("请输入用户名和密码", "warning");
-    return;
-  }
-
-  const selectedDevices = selectedDevicesList.value;
-  if (selectedDevices.length === 0) {
-    showNotification("请至少选择一个在线设备进行更新", "warning");
-    return;
-  }
-
-  try {
-    isLoading.value = true;
-    showNotification("正在更新设备...", "info");
-
-    // 调用后端的更新方法
-    const results = await wailsBackend.UpdateDevicesFile(
-      selectedDevices,
-      selectedFile.value,
-      [], // fileBinary - 从前端直接传空数组，后端将使用文件名查找文件
-      selectedMd5File.value || "",
-      [], // md5FileBinary - 从前端直接传空数组，后端将使用文件名查找文件
-      username.value,
-      password.value
-    );
-
-    // 处理结果
-    updateResults.value = results || [];
-    processUpdateResults(results);
-  } catch (error) {
-    console.error("更新设备失败:", error);
-    showNotification(`更新失败: ${error}`, "error");
-  } finally {
-    isLoading.value = false;
-  }
-}
 </script>
 
 <template>
@@ -1214,7 +1159,7 @@ async function updateDevices() {
     </div>
 
     <div class="header">
-      <h1>设备更新管理 <span class="version">v1.1.6</span></h1>
+      <h1>设备更新管理 <span class="version">v1.1.7</span></h1>
     </div>
 
     <div class="tabs">
@@ -1461,12 +1406,12 @@ async function updateDevices() {
         <h2>更新设备</h2>
 
         <div class="form-group">
-          <label>用户名</label>
+          <label>界面用户名</label>
           <input v-model="username" placeholder="用户名" />
         </div>
 
         <div class="form-group">
-          <label>密码</label>
+          <label>界面密码</label>
           <input v-model="password" type="password" placeholder="密码" />
         </div>
 
