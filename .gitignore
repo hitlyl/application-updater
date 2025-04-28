@@ -1,39 +1,3 @@
-<<<<<<< HEAD
-# Golang
-/build/bin
-*.exe
-*.exe~
-*.dll
-*.so
-*.dylib
-*.test
-*.out
-go.work
-
-# Vue/Node.js
-node_modules
-/frontend/wailsjs/go
-/frontend/dist
-/frontend/dist-ssr
-*.local
-.env
-.env.*
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-.DS_Store
-
-# Editor directories and files
-.idea
-.vscode/*
-!.vscode/extensions.json
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
-=======
 # Build artifacts
 build/bin
 build/*/bin
@@ -79,4 +43,3 @@ refs
 .env.local
 *.md5
 
->>>>>>> dev
