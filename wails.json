@@ -1,13 +1,27 @@
 {
   "$schema": "https://wails.io/schemas/config.v2.json",
-  "name": "application-updater",
+  "name": "Application Updater",
   "outputfilename": "application-updater",
   "frontend:install": "npm install",
   "frontend:build": "npm run build",
   "frontend:dev:watcher": "npm run dev",
   "frontend:dev:serverUrl": "auto",
   "author": {
-    "name": "lyl",
+    "name": "Sophon Team",
     "email": "liuyulong@defensedriver.com.cn"
-  }
+  },
+  "info": {
+    "companyName": "Sophon",
+    "productName": "Application Updater",
+    "productVersion": "1.0.0",
+    "copyright": "© 2023 Sophon. All rights reserved.",
+    "comments": "Device management and update utility"
+  },
+  "debounceMS": 100,
+  "devServer": "localhost:34115",
+  "wailsjsdir": "./frontend/wailsjs",
+  "version": "2",
+  "Path": "",
+  "BuildDir": "",
+  "main": "main.go"
 }

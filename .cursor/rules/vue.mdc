@@ -1,0 +1,8 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+代码尽量模块化，组件化。
+使用vue3 composition api 形式。
+代码简洁

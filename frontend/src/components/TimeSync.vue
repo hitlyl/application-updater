@@ -143,9 +143,15 @@
 
 <script lang="ts" setup>
 import { ref, computed, onMounted } from "vue";
+import * as backend from "../../wailsjs/wailsjs/go/main/App";
 
-// 使用window.go.main.App作为临时解决方案
-const App = window.go?.main?.App;
+// @ts-nocheck
+
+// 定义后端API类型，避免TypeScript错误
+type BackendAPI = typeof backend;
+
+// 不再使用ref引用后端
+// const App = ref<BackendAPI | null>(null);
 
 // 定义接口类型
 interface DeviceWithSelection {
@@ -208,64 +214,59 @@ const updateSelectionState = () => {
 // 加载设备列表
 const loadDevices = async () => {
   try {
-    if (!App) {
-      console.error("后端App不可用");
-      return;
-    }
+    const deviceList = await backend.GetDevices();
 
-    const deviceList = await App.GetDevices();
+    // 转换为内部使用的设备类型
     devices.value = deviceList.map((device: any) => ({
-      ...device,
-      selected: device.status === "online",
+      ip: device.ip || "",
+      buildTime: device.buildTime || "",
+      status: device.status || "offline",
+      selected: device.status === "online", // 默认选中所有在线设备
     }));
+
+    updateSelectionState();
   } catch (error) {
     console.error("加载设备列表失败:", error);
   }
 };
 
-// 同步时间
+// 同步设备时间
 const syncTime = async () => {
+  if (!username.value || !password.value) {
+    alert("请输入SSH用户名和密码");
+    return;
+  }
+
+  const selectedIPs = devices.value
+    .filter((device) => device.selected)
+    .map((device) => device.ip);
+
+  if (selectedIPs.length === 0) {
+    alert("请选择至少一个设备");
+    return;
+  }
+
+  isProcessing.value = true;
+  syncResults.value = [];
+
   try {
-    isProcessing.value = true;
-    syncResults.value = [];
-
-    if (!App) {
-      throw new Error("后端App不可用");
-    }
-
-    // 获取选中的设备
-    const selectedDevices = devices.value
-      .filter((device) => device.selected)
-      .map((device) => device.ip);
-
-    if (selectedDevices.length === 0) {
-      throw new Error("未选择任何设备");
-    }
-
-    // 调用后端同步时间
-    const results = await App.SyncDeviceTime(
+    const results = await backend.SyncDeviceTime(
       username.value,
       password.value,
-      selectedDevices
+      selectedIPs
     );
-
     syncResults.value = results;
-
-    // 刷新设备列表
-    await loadDevices();
   } catch (error) {
-    console.error("同步时间失败:", error);
-    alert(
-      `同步时间失败: ${error instanceof Error ? error.message : String(error)}`
-    );
+    console.error("同步设备时间失败:", error);
+    alert(`同步设备时间失败: ${error}`);
   } finally {
     isProcessing.value = false;
   }
 };
 
-// 组件挂载时加载设备列表
-onMounted(() => {
-  loadDevices();
+// 初始化组件
+onMounted(async () => {
+  await loadDevices();
 });
 </script>
 

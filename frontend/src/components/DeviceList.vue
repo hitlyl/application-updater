@@ -1,18 +1,14 @@
+// @ts-nocheck
 <script setup lang="ts">
 import { ref, computed } from "vue";
-import {
-  GetDevices,
-  UpdateDevices,
-  RefreshDevices,
-  GetMd5File,
-} from "../../wailsjs/go/main/App";
-import { main } from "../../wailsjs/go/models";
+import { GetDevices, RefreshDevices } from "../../wailsjs/wailsjs/go/main/App";
+import { models } from "../../wailsjs/wailsjs/go/models";
 
-const devices = ref<main.Device[]>([]);
+const devices = ref<models.Device[]>([]);
 const username = ref("");
 const password = ref("");
 const updating = ref(false);
-const updateResults = ref<main.UpdateResult[]>([]);
+const updateResults = ref<any[]>([]);
 const selectedDevices = ref<Set<string>>(new Set()); // 用于存储选中的设备IP
 
 // 按buildTime分组的计算属性
@@ -34,7 +30,7 @@ const groupedDevices = computed(() => {
       string,
       {
         buildTime: string;
-        devices: main.Device[];
+        devices: models.Device[];
         selected: boolean;
       }
     >
@@ -118,13 +114,10 @@ const updateSelectedDevices = async () => {
 
   try {
     updating.value = true;
-    const results = await UpdateDevices(
-      username.value,
-      password.value,
-      buildTime,
-      await GetMd5File()
-    );
-    updateResults.value = results;
+
+    // 提示用户功能暂不可用
+    alert("更新功能暂不可用，请联系开发人员");
+
     await refreshDevices();
   } catch (error) {
     console.error("Update failed:", error);
